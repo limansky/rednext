@@ -1,24 +1,39 @@
 use std::{ffi::OsStr, fs};
 
-use clap::{Parser, ValueEnum};
+use clap::{Parser, Subcommand};
 use dirs::config_dir;
 
-#[derive(ValueEnum, Debug, Clone)]
+#[derive(Subcommand, Debug)]
 enum Action {
+    /// List available files
     List,
-    ListItems,
-    New,
-    Delete,
+
+    /// List items in the file
+    #[command(arg_required_else_help = true)]
+    ListItems { name: String },
+
+    /// Create new file
+    #[command(arg_required_else_help = true)]
+    New { name: String },
+
+    /// Delete file
+    #[command(arg_required_else_help = true)]
+    Delete { name: String },
 }
 
 #[derive(Parser, Debug)]
+#[command(about = "Simple random tasks manager")]
 struct Args {
+    #[command(subcommand)]
     action: Action,
 }
 
 fn main() {
     let args = Args::parse();
-    list();
+    match args.action {
+        Action::List => list(),
+        _ => unimplemented!("Not implemented yet"),
+    }
 }
 
 fn list() {
