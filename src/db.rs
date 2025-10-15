@@ -6,7 +6,7 @@ pub trait DB {
 
 #[derive(Debug)]
 pub enum Problem {
-    IOError(String)
+    IOError(String),
 }
 
 impl fmt::Display for Problem {

@@ -1,6 +1,6 @@
 use std::{ffi::OsStr, fs, path::PathBuf};
 
-use crate::db::{Problem, DB};
+use crate::db::{DB, Problem};
 
 pub struct SqliteDB {
     path: PathBuf,

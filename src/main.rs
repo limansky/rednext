@@ -44,7 +44,6 @@ fn main() {
 }
 
 fn list(db: &impl DB) {
-
     let files = db.list_files().unwrap();
 
     for (i, name) in (1..).zip(files.into_iter()) {
