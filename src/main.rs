@@ -1,3 +1,8 @@
+use std::{
+    fs::File,
+    io::{BufRead, BufReader},
+};
+
 use clap::{Parser, Subcommand};
 use dialoguer::Confirm;
 use dirs::config_dir;
@@ -19,7 +24,10 @@ enum Action {
 
     /// Create new file
     #[command(arg_required_else_help = true)]
-    New { name: String },
+    New {
+        name: String,
+        from_file: Option<String>,
+    },
 
     /// Delete file
     #[command(arg_required_else_help = true)]
@@ -41,7 +49,7 @@ fn main() {
     match args.action {
         Action::List => list(&db),
         Action::ListItems { name } => list_items(&db, &name),
-        Action::New { name } => _ = db.open(&name).unwrap(),
+        Action::New { name, from_file } => new_file(&db, &name, from_file),
         Action::Delete { name } => delete(&db, &name),
     }
 }
@@ -60,6 +68,17 @@ fn list_items(db: &impl DB, name: &str) {
     let items = file.list_items().unwrap();
     for (i, r) in (1..).zip(items.into_iter()) {
         println!("{}. {}", i, r.name);
+    }
+}
+
+fn new_file(db: &impl DB, name: &str, source: Option<String>) {
+    let file = db.open(name).unwrap();
+    if let Some(from_file) = source {
+        let ff = File::open(from_file).unwrap();
+        let lines = BufReader::new(ff).lines();
+        for line in lines.map_while(Result::ok) {
+            file.insert(&line).unwrap();
+        }
     }
 }
 

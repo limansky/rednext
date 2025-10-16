@@ -1,6 +1,6 @@
 use std::{ffi::OsStr, fs, path::PathBuf, result};
 
-use rusqlite::Connection;
+use rusqlite::{Connection, params};
 
 use crate::db::{DB, DBFile, DbItem, Problem, Result};
 
@@ -79,6 +79,13 @@ impl SqliteFile {
 }
 
 impl DBFile for SqliteFile {
+    fn insert(&self, item_name: &str) -> Result<()> {
+        self.connection
+            .execute("INSERT INTO items (name) VALUES(?1)", params![item_name])
+            .map_err(|e| Problem::DBError(format!("Cannot insert item {e}")))?;
+        Ok(())
+    }
+
     fn list_items(&self) -> Result<Vec<crate::db::DbItem>> {
         self.select_items()
             .map_err(|e| Problem::DBError(format!("Query error {e}")))

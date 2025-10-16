@@ -11,6 +11,7 @@ pub trait DB {
 
 pub trait DBFile {
     fn list_items(&self) -> Result<Vec<DbItem>>;
+    fn insert(&self, item_name: &str) -> Result<()>;
 }
 
 pub struct DbItem {
