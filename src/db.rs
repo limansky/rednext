@@ -6,6 +6,7 @@ pub type Result<T> = result::Result<T, Problem>;
 pub trait DB {
     fn list_files(&self) -> Result<Vec<String>>;
     fn open(&self, name: &str) -> Result<Box<dyn DBFile>>;
+    fn delete(&self, name: &str) -> Result<()>;
 }
 
 pub trait DBFile {

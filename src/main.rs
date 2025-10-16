@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use dialoguer::Confirm;
 use dirs::config_dir;
 
 use crate::{db::DB, sqlite::SqliteDB};
@@ -40,7 +41,8 @@ fn main() {
     match args.action {
         Action::List => list(&db),
         Action::ListItems { name } => list_items(&db, &name),
-        _ => unimplemented!("Not implemented yet"),
+        Action::New { name } => _ = db.open(&name).unwrap(),
+        Action::Delete { name } => delete(&db, &name),
     }
 }
 
@@ -58,5 +60,16 @@ fn list_items(db: &impl DB, name: &str) {
     let items = file.list_items().unwrap();
     for (i, r) in (1..).zip(items.into_iter()) {
         println!("{}. {}", i, r.name);
+    }
+}
+
+fn delete(db: &impl DB, name: &str) {
+    let confirmation = Confirm::new()
+        .with_prompt(format!("Are you sure you want to delete file {name}?"))
+        .interact()
+        .unwrap();
+
+    if confirmation {
+        db.delete(name).unwrap();
     }
 }

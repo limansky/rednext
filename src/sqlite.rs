@@ -44,12 +44,12 @@ impl DB for SqliteDB {
         }
     }
 
-    fn open(&self, name: &str) -> Result<Box<dyn crate::db::DBFile>> {
+    fn open(&self, name: &str) -> Result<Box<dyn DBFile>> {
         let mut path = self.path.clone();
         path.push(name);
         path.set_extension("db");
         let conn = Connection::open(path)
-            .map_err(|e| Problem::DBError(format!("Cannot open DB {}", e)))?;
+            .map_err(|e| Problem::DBError(format!("Cannot open DB, {}", e)))?;
         conn.execute(
             "CREATE TABLE IF NOT EXISTS items(
                 name TEXT,
@@ -58,8 +58,15 @@ impl DB for SqliteDB {
         )",
             (),
         )
-        .map_err(|e| Problem::DBError(format!("Cannot initialize DB {}", e)))?;
+        .map_err(|e| Problem::DBError(format!("Cannot initialize DB, {}", e)))?;
         Ok(Box::new(SqliteFile { connection: conn }))
+    }
+
+    fn delete(&self, name: &str) -> Result<()> {
+        let mut path = self.path.clone();
+        path.push(name);
+        path.set_extension("db");
+        fs::remove_file(path).map_err(|e| Problem::IOError(format!("Cannot delete file, {e}")))
     }
 }
 
