@@ -39,6 +39,7 @@ fn main() {
     let db = SqliteDB::new(&db_path);
     match args.action {
         Action::List => list(&db),
+        Action::ListItems { name } => list_items(&db, &name),
         _ => unimplemented!("Not implemented yet"),
     }
 }
@@ -48,5 +49,14 @@ fn list(db: &impl DB) {
 
     for (i, name) in (1..).zip(files.into_iter()) {
         println!("{}. {}", i, name);
+    }
+}
+
+fn list_items(db: &impl DB, name: &str) {
+    let file = db.open(&name).unwrap();
+
+    let items = file.list_items().unwrap();
+    for (i, r) in (1..).zip(items.into_iter()) {
+        println!("{}. {}", i, r.name);
     }
 }
