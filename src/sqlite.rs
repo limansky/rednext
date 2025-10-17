@@ -1,8 +1,8 @@
 use std::{ffi::OsStr, fs, path::PathBuf, result};
 
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
-use crate::db::{DBFile, DbItem, Problem, Result, DB};
+use crate::db::{DB, DBFile, DbItem, Problem, Result};
 
 pub struct SqliteDB {
     path: PathBuf,
@@ -65,7 +65,7 @@ impl DB for SqliteDB {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS items(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
+                name TEXT NOT NULL UNIQUE,
                 done_at TIMESTAMP,
                 comment TEXT
         )",

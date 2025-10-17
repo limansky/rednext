@@ -3,24 +3,25 @@ use std::{
     io::{BufRead, BufReader},
 };
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use dialoguer::Confirm;
 use dirs::config_dir;
 
-use crate::{db::DB, sqlite::SqliteDB};
+use crate::{
+    db::{DB, DBFile},
+    sqlite::SqliteDB,
+};
 
 mod db;
 mod sqlite;
 
 #[derive(Subcommand, Debug)]
-
 enum Action {
     /// List available files
     List,
 
-    /// List items in the file
-    #[command(arg_required_else_help = true)]
-    ListItems { name: String },
+    /// Operations within items
+    Items(ItemsParams),
 
     /// Create new file
     #[command(arg_required_else_help = true)]
@@ -34,21 +35,58 @@ enum Action {
     Delete { name: String },
 }
 
+#[derive(Debug, Args)]
+struct ItemsParams {
+    /// File name
+    name: String,
+    #[command(subcommand)]
+    action: ItemsAction,
+}
+
+#[derive(Subcommand, Debug)]
+enum ItemsAction {
+    /// List items
+    List,
+
+    /// Add new Item
+    Add { name: String },
+
+    /// Delete item by ID
+    Delete { id: u64 },
+
+    /// Find item by name
+    Find,
+
+    /// Get item by ID
+    Get,
+
+    /// Get random item
+    GetRandom,
+}
+
 #[derive(Parser, Debug)]
 #[command(about = "Simple random tasks manager")]
-struct Args {
+struct Params {
     #[command(subcommand)]
     action: Action,
 }
 
 fn main() {
-    let args = Args::parse();
+    let params = Params::parse();
     let mut db_path = config_dir().unwrap();
     db_path.push("rednext");
     let db = SqliteDB::new(&db_path);
-    match args.action {
+    match params.action {
         Action::List => list(&db),
-        Action::ListItems { name } => list_items(&db, &name),
+        Action::Items(ip) => {
+            let file = db.open(&ip.name).unwrap();
+            match ip.action {
+                ItemsAction::List => list_items(file.as_ref()),
+                ItemsAction::Add { name } => add_item(file.as_ref(), &name),
+                _ => todo!(),
+            }
+        }
+        // Action::ListItems { name } => list_items(&db, &name),
         Action::New { name, from_file } => new_file(&db, &name, from_file),
         Action::Delete { name } => delete(&db, &name),
     }
@@ -62,13 +100,15 @@ fn list(db: &impl DB) {
     }
 }
 
-fn list_items(db: &impl DB, name: &str) {
-    let file = db.open(&name).unwrap();
-
+fn list_items(file: &dyn DBFile) {
     let items = file.list_items().unwrap();
     for i in items {
         println!("{}. {}", i.id, i.name);
     }
+}
+
+fn add_item(file: &dyn DBFile, item_name: &str) {
+    file.insert(item_name).unwrap();
 }
 
 fn new_file(db: &impl DB, name: &str, source: Option<String>) {
