@@ -10,7 +10,7 @@ use dialoguer::Confirm;
 use dirs::config_dir;
 
 use crate::{
-    db::{DBFile, DbItem, DB},
+    db::{DB, DBFile, DbItem},
     sqlite::SqliteDB,
 };
 
@@ -108,7 +108,7 @@ fn list_items(file: &dyn DBFile) {
     for i in items {
         let line = format!("{}. {}", i.id, i.name);
         if i.completed_at.is_none() {
-        println!("{line}");
+            println!("{line}");
         } else {
             println!("{}", done.apply_to(line));
         }
