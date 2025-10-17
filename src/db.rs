@@ -15,6 +15,7 @@ pub trait DBFile {
 }
 
 pub struct DbItem {
+    pub id: u64,
     pub name: String,
 }
 

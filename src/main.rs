@@ -66,8 +66,8 @@ fn list_items(db: &impl DB, name: &str) {
     let file = db.open(&name).unwrap();
 
     let items = file.list_items().unwrap();
-    for (i, r) in (1..).zip(items.into_iter()) {
-        println!("{}. {}", i, r.name);
+    for i in items {
+        println!("{}. {}", i.id, i.name);
     }
 }
 

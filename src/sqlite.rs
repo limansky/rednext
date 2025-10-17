@@ -1,8 +1,8 @@
 use std::{ffi::OsStr, fs, path::PathBuf, result};
 
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 
-use crate::db::{DB, DBFile, DbItem, Problem, Result};
+use crate::db::{DBFile, DbItem, Problem, Result, DB};
 
 pub struct SqliteDB {
     path: PathBuf,
@@ -45,6 +45,18 @@ impl DB for SqliteDB {
     }
 
     fn open(&self, name: &str) -> Result<Box<dyn DBFile>> {
+        if !self.path.exists() {
+            fs::create_dir_all(&self.path)
+                .map_err(|e| Problem::IOError(format!("Cannot create directory, {}", e)))?;
+        }
+
+        if !self.path.is_dir() {
+            return Err(Problem::IOError(format!(
+                "{:?} is not a directory",
+                self.path
+            )));
+        }
+
         let mut path = self.path.clone();
         path.push(name);
         path.set_extension("db");
@@ -52,7 +64,8 @@ impl DB for SqliteDB {
             .map_err(|e| Problem::DBError(format!("Cannot open DB, {}", e)))?;
         conn.execute(
             "CREATE TABLE IF NOT EXISTS items(
-                name TEXT,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
                 done_at TIMESTAMP,
                 comment TEXT
         )",
@@ -72,8 +85,13 @@ impl DB for SqliteDB {
 
 impl SqliteFile {
     fn select_items(&self) -> rusqlite::Result<Vec<DbItem>> {
-        let mut stmt = self.connection.prepare("SELECT name FROM items")?;
-        let iter = stmt.query_map([], |row| Ok(DbItem { name: row.get(0)? }))?;
+        let mut stmt = self.connection.prepare("SELECT id, name FROM items")?;
+        let iter = stmt.query_map([], |row| {
+            Ok(DbItem {
+                id: row.get(0)?,
+                name: row.get(1)?,
+            })
+        })?;
         iter.collect()
     }
 }
@@ -86,7 +104,7 @@ impl DBFile for SqliteFile {
         Ok(())
     }
 
-    fn list_items(&self) -> Result<Vec<crate::db::DbItem>> {
+    fn list_items(&self) -> Result<Vec<DbItem>> {
         self.select_items()
             .map_err(|e| Problem::DBError(format!("Query error {e}")))
     }
