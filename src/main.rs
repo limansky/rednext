@@ -3,12 +3,14 @@ use std::{
     io::{BufRead, BufReader},
 };
 
+use chrono::Local;
 use clap::{Args, Parser, Subcommand};
+use console::Style;
 use dialoguer::Confirm;
 use dirs::config_dir;
 
 use crate::{
-    db::{DB, DBFile},
+    db::{DBFile, DbItem, DB},
     sqlite::SqliteDB,
 };
 
@@ -83,6 +85,7 @@ fn main() {
             match ip.action {
                 ItemsAction::List => list_items(file.as_ref()),
                 ItemsAction::Add { name } => add_item(file.as_ref(), &name),
+                ItemsAction::GetRandom => get_random(file.as_ref()),
                 _ => todo!(),
             }
         }
@@ -94,7 +97,6 @@ fn main() {
 
 fn list(db: &impl DB) {
     let files = db.list_files().unwrap();
-
     for (i, name) in (1..).zip(files.into_iter()) {
         println!("{}. {}", i, name);
     }
@@ -102,13 +104,42 @@ fn list(db: &impl DB) {
 
 fn list_items(file: &dyn DBFile) {
     let items = file.list_items().unwrap();
+    let done = Style::new().strikethrough();
     for i in items {
-        println!("{}. {}", i.id, i.name);
+        let line = format!("{}. {}", i.id, i.name);
+        if i.completed_at.is_none() {
+        println!("{line}");
+        } else {
+            println!("{}", done.apply_to(line));
+        }
     }
 }
 
 fn add_item(file: &dyn DBFile, item_name: &str) {
     file.insert(item_name).unwrap();
+}
+
+fn get_random(file: &dyn DBFile) {
+    if let Some(item) = file.get_random().unwrap() {
+        println!("random Item is {}: {}", item.id, item.name);
+        process_item(file, item);
+    } else {
+        println!("All items are complete");
+    }
+}
+
+fn process_item(file: &dyn DBFile, item: DbItem) {
+    if item.completed_at.is_some() {
+        println!("Already completed");
+    } else {
+        let done = Confirm::new()
+            .with_prompt("Mark as done?")
+            .interact()
+            .unwrap();
+        if done {
+            file.done(item.id, Local::now().naive_local()).unwrap();
+        }
+    }
 }
 
 fn new_file(db: &impl DB, name: &str, source: Option<String>) {

@@ -1,6 +1,6 @@
 use std::{ffi::OsStr, fs, path::PathBuf, result};
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use crate::db::{DB, DBFile, DbItem, Problem, Result};
 
@@ -84,15 +84,34 @@ impl DB for SqliteDB {
 }
 
 impl SqliteFile {
+    fn to_db_item(row: &Row) -> rusqlite::Result<DbItem> {
+        Ok(DbItem {
+            id: row.get("id")?,
+            name: row.get("name")?,
+            completed_at: row.get("done_at")?,
+        })
+    }
+
     fn select_items(&self) -> rusqlite::Result<Vec<DbItem>> {
-        let mut stmt = self.connection.prepare("SELECT id, name FROM items")?;
-        let iter = stmt.query_map([], |row| {
-            Ok(DbItem {
-                id: row.get(0)?,
-                name: row.get(1)?,
-            })
-        })?;
+        let mut stmt = self
+            .connection
+            .prepare("SELECT id, name, done_at FROM items")?;
+        let iter = stmt.query_map([], Self::to_db_item)?;
         iter.collect()
+    }
+
+    fn select_random_undone(&self) -> rusqlite::Result<Option<DbItem>> {
+        self.connection
+            .query_one(
+                "SELECT id, name, done_at
+                   FROM items
+                   WHERE done_at IS NULL
+                   ORDER BY random()
+                   LIMIT 1",
+                [],
+                Self::to_db_item,
+            )
+            .optional()
     }
 }
 
@@ -107,5 +126,28 @@ impl DBFile for SqliteFile {
     fn list_items(&self) -> Result<Vec<DbItem>> {
         self.select_items()
             .map_err(|e| Problem::DBError(format!("Query error {e}")))
+    }
+
+    fn get_random(&self) -> Result<Option<DbItem>> {
+        self.select_random_undone()
+            .map_err(|e| Problem::DBError(format!("Query error {e}")))
+    }
+
+    fn done(&self, id: u64, time: chrono::NaiveDateTime) -> Result<()> {
+        let count = self
+            .connection
+            .execute(
+                "UPDATE items SET done_at=?1 WHERE id =?2",
+                params![time, id],
+            )
+            .map_err(|e| Problem::DBError(format!("Cannot update item, {e}")))?;
+        if count == 1 {
+            Ok(())
+        } else {
+            Err(Problem::DBError(format!(
+                "Expect exact one item, but got {}",
+                count
+            )))
+        }
     }
 }

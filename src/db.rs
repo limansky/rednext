@@ -1,6 +1,8 @@
 use core::fmt;
 use std::result;
 
+use chrono::NaiveDateTime;
+
 pub type Result<T> = result::Result<T, Problem>;
 
 pub trait DB {
@@ -12,11 +14,14 @@ pub trait DB {
 pub trait DBFile {
     fn list_items(&self) -> Result<Vec<DbItem>>;
     fn insert(&self, item_name: &str) -> Result<()>;
+    fn get_random(&self) -> Result<Option<DbItem>>;
+    fn done(&self, id: u64, time: NaiveDateTime) -> Result<()>;
 }
 
 pub struct DbItem {
     pub id: u64,
     pub name: String,
+    pub completed_at: Option<NaiveDateTime>,
 }
 
 #[derive(Debug)]
