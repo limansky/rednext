@@ -14,8 +14,11 @@ pub trait DB {
 pub trait DBFile {
     fn list_items(&self) -> Result<Vec<DbItem>>;
     fn insert(&self, item_name: &str) -> Result<()>;
+    fn delete(&self, id: u64) -> Result<()>;
+    fn get(&self, id: u64) -> Result<Option<DbItem>>;
     fn get_random(&self) -> Result<Option<DbItem>>;
     fn done(&self, id: u64, time: NaiveDateTime) -> Result<()>;
+    fn undone(&self, id: u64) -> Result<()>;
 }
 
 pub struct DbItem {

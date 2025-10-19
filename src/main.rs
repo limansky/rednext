@@ -60,7 +60,7 @@ enum ItemsAction {
     Find,
 
     /// Get item by ID
-    Get,
+    Get { id: u64 },
 
     /// Get random item
     GetRandom,
@@ -85,11 +85,12 @@ fn main() {
             match ip.action {
                 ItemsAction::List => list_items(file.as_ref()),
                 ItemsAction::Add { name } => add_item(file.as_ref(), &name),
+                ItemsAction::Delete { id } => delete_item(file.as_ref(), id),
+                ItemsAction::Get { id } => get(file.as_ref(), id),
                 ItemsAction::GetRandom => get_random(file.as_ref()),
-                _ => todo!(),
+                ItemsAction::Find => todo!(),
             }
         }
-        // Action::ListItems { name } => list_items(&db, &name),
         Action::New { name, from_file } => new_file(&db, &name, from_file),
         Action::Delete { name } => delete(&db, &name),
     }
@@ -119,26 +120,44 @@ fn add_item(file: &dyn DBFile, item_name: &str) {
     file.insert(item_name).unwrap();
 }
 
+fn delete_item(file: &dyn DBFile, id: u64) {
+    file.delete(id).unwrap();
+}
+
+fn get(file: &dyn DBFile, id: u64) {
+    if let Some(item) = file.get(id).unwrap() {
+        if item.completed_at.is_some() {
+            let conf = Confirm::new()
+                .with_prompt("Already done. Mark as undone?")
+                .interact()
+                .unwrap();
+            if conf {
+                file.undone(id).unwrap();
+            }
+        } else {
+            mark_done(file, item);
+        }
+    } else {
+        println!("Item with id {id} doesn't exist");
+    }
+}
+
 fn get_random(file: &dyn DBFile) {
     if let Some(item) = file.get_random().unwrap() {
         println!("random Item is {}: {}", item.id, item.name);
-        process_item(file, item);
+        mark_done(file, item);
     } else {
         println!("All items are complete");
     }
 }
 
-fn process_item(file: &dyn DBFile, item: DbItem) {
-    if item.completed_at.is_some() {
-        println!("Already completed");
-    } else {
-        let done = Confirm::new()
-            .with_prompt("Mark as done?")
-            .interact()
-            .unwrap();
-        if done {
-            file.done(item.id, Local::now().naive_local()).unwrap();
-        }
+fn mark_done(file: &dyn DBFile, item: DbItem) {
+    let done = Confirm::new()
+        .with_prompt("Mark as done?")
+        .interact()
+        .unwrap();
+    if done {
+        file.done(item.id, Local::now().naive_local()).unwrap();
     }
 }
 

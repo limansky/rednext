@@ -113,6 +113,16 @@ impl SqliteFile {
             )
             .optional()
     }
+
+    fn get_by_id(&self, id: u64) -> rusqlite::Result<Option<DbItem>> {
+        self.connection
+            .query_one(
+                "SELECT id, name, done_at FROM items WHERE id=?1",
+                params![id],
+                Self::to_db_item,
+            )
+            .optional()
+    }
 }
 
 impl DBFile for SqliteFile {
@@ -123,6 +133,13 @@ impl DBFile for SqliteFile {
         Ok(())
     }
 
+    fn delete(&self, id: u64) -> Result<()> {
+        self.connection
+            .execute("DELETE FROM items WHERE id=?1", params![id])
+            .map_err(|e| Problem::DBError(format!("Cannot delete item {e}")))?;
+        Ok(())
+    }
+
     fn list_items(&self) -> Result<Vec<DbItem>> {
         self.select_items()
             .map_err(|e| Problem::DBError(format!("Query error {e}")))
@@ -130,6 +147,11 @@ impl DBFile for SqliteFile {
 
     fn get_random(&self) -> Result<Option<DbItem>> {
         self.select_random_undone()
+            .map_err(|e| Problem::DBError(format!("Query error {e}")))
+    }
+
+    fn get(&self, id: u64) -> Result<Option<DbItem>> {
+        self.get_by_id(id)
             .map_err(|e| Problem::DBError(format!("Query error {e}")))
     }
 
@@ -148,6 +170,19 @@ impl DBFile for SqliteFile {
                 "Expect exact one item, but got {}",
                 count
             )))
+        }
+    }
+
+    fn undone(&self, id: u64) -> Result<()> {
+        let count = self
+            .connection
+            .execute("UPDATE items SET done_at=NULL WHERE id =?1", params![id])
+            .map_err(|e| Problem::DBError(format!("Cannot update item, {e}")))?;
+
+        if count == 1 {
+            Ok(())
+        } else {
+            Err(Problem::DBError(format!("Item with id {id} is not found")))
         }
     }
 }
