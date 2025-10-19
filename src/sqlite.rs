@@ -1,9 +1,9 @@
 use std::{ffi::OsStr, fs, path::PathBuf, result};
 
-use anyhow::{anyhow, Context, Result};
-use rusqlite::{params, Connection, OptionalExtension, Row};
+use anyhow::{Context, Result, anyhow};
+use rusqlite::{Connection, OptionalExtension, Row, params};
 
-use crate::db::{DBFile, DbItem, DB};
+use crate::db::{DB, DBFile, DbItem};
 
 pub struct SqliteDB {
     path: PathBuf,
