@@ -1,9 +1,5 @@
-use core::fmt;
-use std::result;
-
+use anyhow::Result;
 use chrono::NaiveDateTime;
-
-pub type Result<T> = result::Result<T, Problem>;
 
 pub trait DB {
     fn list_files(&self) -> Result<Vec<String>>;
@@ -25,19 +21,4 @@ pub struct DbItem {
     pub id: u64,
     pub name: String,
     pub completed_at: Option<NaiveDateTime>,
-}
-
-#[derive(Debug)]
-pub enum Problem {
-    IOError(String),
-    DBError(String),
-}
-
-impl fmt::Display for Problem {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Problem::IOError(msg) => write!(f, "IO error: {msg}"),
-            Problem::DBError(msg) => write!(f, "DB error: {msg}"),
-        }
-    }
 }

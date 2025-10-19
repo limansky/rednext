@@ -1,8 +1,9 @@
 use std::{ffi::OsStr, fs, path::PathBuf, result};
 
-use rusqlite::{Connection, OptionalExtension, Row, params};
+use anyhow::{anyhow, Context, Result};
+use rusqlite::{params, Connection, OptionalExtension, Row};
 
-use crate::db::{DB, DBFile, DbItem, Problem, Result};
+use crate::db::{DBFile, DbItem, DB};
 
 pub struct SqliteDB {
     path: PathBuf,
@@ -35,9 +36,9 @@ impl DB for SqliteDB {
                             })
                             .collect()
                     })
-                    .map_err(|e| Problem::IOError(format!("Cannot read databases {}", e)))
+                    .context("Cannot read databases")
             } else {
-                Err(Problem::IOError(format!("Invalid DB path {:?}", self.path)))
+                Err(anyhow!("Invalid DB path {:?}", self.path))
             }
         } else {
             Ok(vec![])
@@ -46,22 +47,17 @@ impl DB for SqliteDB {
 
     fn open(&self, name: &str) -> Result<Box<dyn DBFile>> {
         if !self.path.exists() {
-            fs::create_dir_all(&self.path)
-                .map_err(|e| Problem::IOError(format!("Cannot create directory, {}", e)))?;
+            fs::create_dir_all(&self.path).context("Cannot create directory")?;
         }
 
         if !self.path.is_dir() {
-            return Err(Problem::IOError(format!(
-                "{:?} is not a directory",
-                self.path
-            )));
+            return Err(anyhow!("{:?} is not a directory", self.path));
         }
 
         let mut path = self.path.clone();
         path.push(name);
         path.set_extension("db");
-        let conn = Connection::open(path)
-            .map_err(|e| Problem::DBError(format!("Cannot open DB, {}", e)))?;
+        let conn = Connection::open(path).context("Cannot open DB")?;
         conn.execute(
             "CREATE TABLE IF NOT EXISTS items(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,7 +67,7 @@ impl DB for SqliteDB {
         )",
             (),
         )
-        .map_err(|e| Problem::DBError(format!("Cannot initialize DB, {}", e)))?;
+        .context("Cannot initialize DB")?;
         Ok(Box::new(SqliteFile { connection: conn }))
     }
 
@@ -79,7 +75,7 @@ impl DB for SqliteDB {
         let mut path = self.path.clone();
         path.push(name);
         path.set_extension("db");
-        fs::remove_file(path).map_err(|e| Problem::IOError(format!("Cannot delete file, {e}")))
+        fs::remove_file(path).context("Cannot delete file")
     }
 }
 
@@ -129,30 +125,27 @@ impl DBFile for SqliteFile {
     fn insert(&self, item_name: &str) -> Result<()> {
         self.connection
             .execute("INSERT INTO items (name) VALUES(?1)", params![item_name])
-            .map_err(|e| Problem::DBError(format!("Cannot insert item {e}")))?;
+            .context("Cannot insert item")?;
         Ok(())
     }
 
     fn delete(&self, id: u64) -> Result<()> {
         self.connection
             .execute("DELETE FROM items WHERE id=?1", params![id])
-            .map_err(|e| Problem::DBError(format!("Cannot delete item {e}")))?;
+            .context("Cannot delete item")?;
         Ok(())
     }
 
     fn list_items(&self) -> Result<Vec<DbItem>> {
-        self.select_items()
-            .map_err(|e| Problem::DBError(format!("Query error {e}")))
+        self.select_items().context("Query error")
     }
 
     fn get_random(&self) -> Result<Option<DbItem>> {
-        self.select_random_undone()
-            .map_err(|e| Problem::DBError(format!("Query error {e}")))
+        self.select_random_undone().context("Query error")
     }
 
     fn get(&self, id: u64) -> Result<Option<DbItem>> {
-        self.get_by_id(id)
-            .map_err(|e| Problem::DBError(format!("Query error {e}")))
+        self.get_by_id(id).context("Query error")
     }
 
     fn done(&self, id: u64, time: chrono::NaiveDateTime) -> Result<()> {
@@ -162,14 +155,11 @@ impl DBFile for SqliteFile {
                 "UPDATE items SET done_at=?1 WHERE id =?2",
                 params![time, id],
             )
-            .map_err(|e| Problem::DBError(format!("Cannot update item, {e}")))?;
+            .context("Cannot update item ")?;
         if count == 1 {
             Ok(())
         } else {
-            Err(Problem::DBError(format!(
-                "Expect exact one item, but got {}",
-                count
-            )))
+            Err(anyhow!("Expect exact one item, but got {}", count))
         }
     }
 
@@ -177,12 +167,12 @@ impl DBFile for SqliteFile {
         let count = self
             .connection
             .execute("UPDATE items SET done_at=NULL WHERE id =?1", params![id])
-            .map_err(|e| Problem::DBError(format!("Cannot update item, {e}")))?;
+            .context("Cannot update item")?;
 
         if count == 1 {
             Ok(())
         } else {
-            Err(Problem::DBError(format!("Item with id {id} is not found")))
+            Err(anyhow!("Item with id {id} is not found"))
         }
     }
 }
