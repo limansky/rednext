@@ -10,7 +10,7 @@ use dialoguer::Confirm;
 use dirs::config_dir;
 
 use crate::{
-    db::{DBFile, DbItem, DB},
+    db::{DB, DBFile, DbItem},
     sqlite::SqliteDB,
 };
 
