@@ -4,13 +4,13 @@ use std::{
 };
 
 use chrono::Local;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use console::Style;
 use dialoguer::Confirm;
 use dirs::config_dir;
 
 use crate::{
-    db::{DB, DBFile, DbItem},
+    db::{DBFile, DbItem, DB},
     sqlite::SqliteDB,
 };
 
@@ -48,7 +48,13 @@ struct ItemsParams {
 #[derive(Subcommand, Debug)]
 enum ItemsAction {
     /// List items
-    List,
+    List {
+        #[arg(
+            default_value_t = ListWhat::All,
+            value_enum
+        )]
+        what: ListWhat,
+    },
 
     /// Add new Item
     Add { name: String },
@@ -64,6 +70,22 @@ enum ItemsAction {
 
     /// Get random item
     GetRandom,
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+enum ListWhat {
+    All,
+    Done,
+    Undone,
+}
+
+impl std::fmt::Display for ListWhat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.to_possible_value()
+            .expect("no values are skipped")
+            .get_name()
+            .fmt(f)
+    }
 }
 
 #[derive(Parser, Debug)]
@@ -83,7 +105,7 @@ fn main() {
         Action::Items(ip) => {
             let file = db.open(&ip.name).unwrap();
             match ip.action {
-                ItemsAction::List => list_items(file.as_ref()),
+                ItemsAction::List { what } => list_items(file.as_ref(), what),
                 ItemsAction::Add { name } => add_item(file.as_ref(), &name),
                 ItemsAction::Delete { id } => delete_item(file.as_ref(), id),
                 ItemsAction::Get { id } => get(file.as_ref(), id),
@@ -103,16 +125,33 @@ fn list(db: &impl DB) {
     }
 }
 
-fn list_items(file: &dyn DBFile) {
-    let items = file.list_items().unwrap();
-    let done = Style::new().strikethrough();
+fn list_items(file: &dyn DBFile, what: ListWhat) {
+    let items = match what {
+        ListWhat::All => file.list_items(),
+        ListWhat::Done => file.list_done(),
+        ListWhat::Undone => file.list_undone(),
+    }
+    .unwrap();
+    let stat_style = Style::new().bold();
+    let mut done_count = 0;
+    let total = items.len();
     for i in items {
         let line = format!("{}. {}", i.id, i.name);
         if i.completed_at.is_none() {
             println!("{line}");
         } else {
-            println!("{}", done.apply_to(line));
+            done_count += 1;
+            println!("{} {}", line, "\u{2705}");
         }
+    }
+    if what == ListWhat::All {
+        let stat = format!(
+            "Total: done {} of {} ({:.2}%)",
+            done_count,
+            total,
+            (done_count as f64) / (total as f64) * 100.0
+        );
+        println!("{}", stat_style.apply_to(stat));
     }
 }
 

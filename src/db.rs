@@ -9,6 +9,8 @@ pub trait DB {
 
 pub trait DBFile {
     fn list_items(&self) -> Result<Vec<DbItem>>;
+    fn list_done(&self) -> Result<Vec<DbItem>>;
+    fn list_undone(&self) -> Result<Vec<DbItem>>;
     fn insert(&self, item_name: &str) -> Result<()>;
     fn delete(&self, id: u64) -> Result<()>;
     fn get(&self, id: u64) -> Result<Option<DbItem>>;

@@ -1,9 +1,9 @@
 use std::{ffi::OsStr, fs, path::PathBuf, result};
 
-use anyhow::{Context, Result, anyhow};
-use rusqlite::{Connection, OptionalExtension, Row, params};
+use anyhow::{anyhow, Context, Result};
+use rusqlite::{params, Connection, OptionalExtension, Row};
 
-use crate::db::{DB, DBFile, DbItem};
+use crate::db::{DBFile, DbItem, DB};
 
 pub struct SqliteDB {
     path: PathBuf,
@@ -88,10 +88,12 @@ impl SqliteFile {
         })
     }
 
-    fn select_items(&self) -> rusqlite::Result<Vec<DbItem>> {
-        let mut stmt = self
-            .connection
-            .prepare("SELECT id, name, done_at FROM items")?;
+    fn select_items(&self, filter: Option<&str>) -> rusqlite::Result<Vec<DbItem>> {
+        let base_query = "SELECT id, name, done_at FROM items".to_string();
+        let q: String = filter
+            .map(|c| format!("{base_query}  WHERE {c}"))
+            .unwrap_or(base_query);
+        let mut stmt = self.connection.prepare(&q)?;
         let iter = stmt.query_map([], Self::to_db_item)?;
         iter.collect()
     }
@@ -137,7 +139,17 @@ impl DBFile for SqliteFile {
     }
 
     fn list_items(&self) -> Result<Vec<DbItem>> {
-        self.select_items().context("Query error")
+        self.select_items(None).context("Query error")
+    }
+
+    fn list_done(&self) -> Result<Vec<DbItem>> {
+        self.select_items(Some("done_at IS NOT NULL"))
+            .context("Query error")
+    }
+
+    fn list_undone(&self) -> Result<Vec<DbItem>> {
+        self.select_items(Some("done_at IS NULL"))
+            .context("Query error")
     }
 
     fn get_random(&self) -> Result<Option<DbItem>> {
