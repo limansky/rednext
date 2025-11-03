@@ -16,6 +16,7 @@ use crate::{
 
 mod db;
 mod sqlite;
+mod http_client;
 
 #[derive(Subcommand, Debug)]
 enum Action {
