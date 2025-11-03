@@ -88,38 +88,20 @@ impl SqliteFile {
         })
     }
 
-    fn select_items(&self, filter: Option<&str>) -> rusqlite::Result<Vec<DbItem>> {
+    fn select_items(
+        &self,
+        filter: Option<&str>,
+        order_by: Option<&str>,
+    ) -> rusqlite::Result<Vec<DbItem>> {
+        let ord = order_by.unwrap_or("id");
         let base_query = "SELECT id, name, done_at FROM items".to_string();
-        let q: String = filter
+        let mut q = filter
             .map(|c| format!("{base_query}  WHERE {c}"))
             .unwrap_or(base_query);
+        q.push_str(&format!(" ORDER BY {ord}"));
         let mut stmt = self.connection.prepare(&q)?;
         let iter = stmt.query_map([], Self::to_db_item)?;
         iter.collect()
-    }
-
-    fn select_random_undone(&self) -> rusqlite::Result<Option<DbItem>> {
-        self.connection
-            .query_one(
-                "SELECT id, name, done_at
-                   FROM items
-                   WHERE done_at IS NULL
-                   ORDER BY random()
-                   LIMIT 1",
-                [],
-                Self::to_db_item,
-            )
-            .optional()
-    }
-
-    fn get_by_id(&self, id: u64) -> rusqlite::Result<Option<DbItem>> {
-        self.connection
-            .query_one(
-                "SELECT id, name, done_at FROM items WHERE id=?1",
-                params![id],
-                Self::to_db_item,
-            )
-            .optional()
     }
 }
 
@@ -139,25 +121,43 @@ impl DBFile for SqliteFile {
     }
 
     fn list_items(&self) -> Result<Vec<DbItem>> {
-        self.select_items(None).context("Query error")
+        self.select_items(None, None).context("Query error")
     }
 
     fn list_done(&self) -> Result<Vec<DbItem>> {
-        self.select_items(Some("done_at IS NOT NULL"))
+        self.select_items(Some("done_at IS NOT NULL"), Some("done_at"))
             .context("Query error")
     }
 
     fn list_undone(&self) -> Result<Vec<DbItem>> {
-        self.select_items(Some("done_at IS NULL"))
+        self.select_items(Some("done_at IS NULL"), None)
             .context("Query error")
     }
 
     fn get_random(&self) -> Result<Option<DbItem>> {
-        self.select_random_undone().context("Query error")
+        self.connection
+            .query_one(
+                "SELECT id, name, done_at
+                   FROM items
+                   WHERE done_at IS NULL
+                   ORDER BY random()
+                   LIMIT 1",
+                [],
+                Self::to_db_item,
+            )
+            .optional()
+            .context("Query error")
     }
 
     fn get(&self, id: u64) -> Result<Option<DbItem>> {
-        self.get_by_id(id).context("Query error")
+        self.connection
+            .query_one(
+                "SELECT id, name, done_at FROM items WHERE id=?1",
+                params![id],
+                Self::to_db_item,
+            )
+            .optional()
+            .context("Query error")
     }
 
     fn done(&self, id: u64, time: chrono::NaiveDateTime) -> Result<()> {
