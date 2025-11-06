@@ -1,7 +1,7 @@
 use std::{ffi::OsStr, fs, path::PathBuf, result};
 
 use anyhow::{Context, Result, anyhow};
-use rusqlite::{Connection, OptionalExtension, Row, params};
+use rusqlite::{Connection, OptionalExtension, Params, Row, params};
 
 use crate::db::{DB, DBFile, DbItem};
 
@@ -88,20 +88,22 @@ impl SqliteFile {
         })
     }
 
-    fn select_items(
+    fn select_items<P: Params>(
         &self,
         filter: Option<&str>,
+        params: P,
         order_by: Option<&str>,
-    ) -> rusqlite::Result<Vec<DbItem>> {
+    ) -> Result<Vec<DbItem>> {
         let ord = order_by.unwrap_or("id");
         let base_query = "SELECT id, name, done_at FROM items".to_string();
         let mut q = filter
-            .map(|c| format!("{base_query}  WHERE {c}"))
+            .map(|c| format!("{base_query} WHERE {c}"))
             .unwrap_or(base_query);
         q.push_str(&format!(" ORDER BY {ord}"));
         let mut stmt = self.connection.prepare(&q)?;
-        let iter = stmt.query_map([], Self::to_db_item)?;
-        iter.collect()
+        let iter = stmt.query_map(params, Self::to_db_item)?;
+        iter.collect::<rusqlite::Result<Vec<_>>>()
+            .context("Item query error")
     }
 }
 
@@ -121,17 +123,20 @@ impl DBFile for SqliteFile {
     }
 
     fn list_items(&self) -> Result<Vec<DbItem>> {
-        self.select_items(None, None).context("Query error")
+        self.select_items(None, [], None)
     }
 
     fn list_done(&self) -> Result<Vec<DbItem>> {
-        self.select_items(Some("done_at IS NOT NULL"), Some("done_at"))
-            .context("Query error")
+        self.select_items(Some("done_at IS NOT NULL"), [], Some("done_at"))
     }
 
     fn list_undone(&self) -> Result<Vec<DbItem>> {
-        self.select_items(Some("done_at IS NULL"), None)
-            .context("Query error")
+        self.select_items(Some("done_at IS NULL"), [], None)
+    }
+
+    fn find(&self, item_name: &str) -> Result<Vec<DbItem>> {
+        let pattern = format!("%{item_name}%");
+        self.select_items(Some("name LIKE ?1"), params![pattern], None)
     }
 
     fn get_random(&self) -> Result<Option<DbItem>> {

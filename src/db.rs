@@ -17,6 +17,7 @@ pub trait DBFile {
     fn get_random(&self) -> Result<Option<DbItem>>;
     fn done(&self, id: u64, time: NaiveDateTime) -> Result<()>;
     fn undone(&self, id: u64) -> Result<()>;
+    fn find(&self, item_name: &str) -> Result<Vec<DbItem>>;
 }
 
 pub struct DbItem {

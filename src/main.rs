@@ -63,7 +63,7 @@ enum ItemsAction {
     Delete { id: u64 },
 
     /// Find item by name
-    Find,
+    Find { name: String },
 
     /// Get item by ID
     Get { id: u64 },
@@ -110,7 +110,7 @@ fn main() {
                 ItemsAction::Delete { id } => delete_item(file.as_ref(), id),
                 ItemsAction::Get { id } => get(file.as_ref(), id),
                 ItemsAction::GetRandom => get_random(file.as_ref()),
-                ItemsAction::Find => todo!(),
+                ItemsAction::Find { name } => find_by_name(file.as_ref(), &name),
             }
         }
         Action::New { name, from_file } => new_file(&db, &name, from_file),
@@ -197,6 +197,17 @@ fn mark_done(file: &dyn DBFile, item: DbItem) {
         .unwrap();
     if done {
         file.done(item.id, Local::now().naive_local()).unwrap();
+    }
+}
+
+fn find_by_name(file: &dyn DBFile, name: &str) {
+    let items = file.find(name).unwrap();
+    if !items.is_empty() {
+        for item in items {
+            println!("{}. {}", item.id, item.name);
+        }
+    } else {
+        println!("No matching items found");
     }
 }
 
