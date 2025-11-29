@@ -141,7 +141,7 @@ fn list_items(file: &dyn DBFile, what: ListWhat) {
             println!("{line}");
         } else {
             done_count += 1;
-            println!("{} {}", line, "\u{2705}");
+            println!("{} \u{2705}", line);
         }
     }
     if what == ListWhat::All {
