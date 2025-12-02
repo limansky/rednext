@@ -1,4 +1,9 @@
-use std::{ffi::OsStr, fs, path::PathBuf, result};
+use std::{
+    ffi::OsStr,
+    fs,
+    path::{Path, PathBuf},
+    result,
+};
 
 use anyhow::{Context, Result, anyhow};
 use rusqlite::{Connection, OptionalExtension, Params, Row, params};
@@ -10,9 +15,9 @@ pub struct SqliteDB {
 }
 
 impl SqliteDB {
-    pub fn new(db_path: &PathBuf) -> Self {
+    pub fn new(db_path: &Path) -> Self {
         SqliteDB {
-            path: db_path.clone(),
+            path: db_path.to_path_buf(),
         }
     }
 }
