@@ -120,7 +120,7 @@ impl DBFile for SqliteFile {
         Ok(())
     }
 
-    fn delete(&self, id: u64) -> Result<()> {
+    fn delete(&self, id: u32) -> Result<()> {
         self.connection
             .execute("DELETE FROM items WHERE id=?1", params![id])
             .context("Cannot delete item")?;
@@ -159,7 +159,7 @@ impl DBFile for SqliteFile {
             .context("Query error")
     }
 
-    fn get(&self, id: u64) -> Result<Option<DbItem>> {
+    fn get(&self, id: u32) -> Result<Option<DbItem>> {
         self.connection
             .query_one(
                 "SELECT id, name, done_at FROM items WHERE id=?1",
@@ -170,7 +170,7 @@ impl DBFile for SqliteFile {
             .context("Query error")
     }
 
-    fn done(&self, id: u64, time: chrono::NaiveDateTime) -> Result<()> {
+    fn done(&self, id: u32, time: chrono::NaiveDateTime) -> Result<()> {
         let count = self
             .connection
             .execute(
@@ -185,7 +185,7 @@ impl DBFile for SqliteFile {
         }
     }
 
-    fn undone(&self, id: u64) -> Result<()> {
+    fn undone(&self, id: u32) -> Result<()> {
         let count = self
             .connection
             .execute("UPDATE items SET done_at=NULL WHERE id =?1", params![id])

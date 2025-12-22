@@ -60,13 +60,13 @@ enum ItemsAction {
     Add { name: String },
 
     /// Delete item by ID
-    Delete { id: u64 },
+    Delete { id: u32 },
 
     /// Find item by name
     Find { name: String },
 
     /// Get item by ID
-    Get { id: u64 },
+    Get { id: u32 },
 
     /// Get random item
     GetRandom,
@@ -159,11 +159,11 @@ fn add_item(file: &dyn DBFile, item_name: &str) {
     file.insert(item_name).unwrap();
 }
 
-fn delete_item(file: &dyn DBFile, id: u64) {
+fn delete_item(file: &dyn DBFile, id: u32) {
     file.delete(id).unwrap();
 }
 
-fn get(file: &dyn DBFile, id: u64) {
+fn get(file: &dyn DBFile, id: u32) {
     if let Some(item) = file.get(id).unwrap() {
         if item.completed_at.is_some() {
             let conf = Confirm::new()
@@ -183,7 +183,7 @@ fn get(file: &dyn DBFile, id: u64) {
 
 fn get_random(file: &dyn DBFile) {
     if let Some(item) = file.get_random().unwrap() {
-        println!("random Item is {}: {}", item.id, item.name);
+        println!("Random item is {}: {}", item.id, item.name);
         mark_done(file, item);
     } else {
         println!("All items are complete");
@@ -193,6 +193,7 @@ fn get_random(file: &dyn DBFile) {
 fn mark_done(file: &dyn DBFile, item: DbItem) {
     let done = Confirm::new()
         .with_prompt("Mark as done?")
+        .default(true)
         .interact()
         .unwrap();
     if done {
