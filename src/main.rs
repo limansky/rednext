@@ -5,12 +5,13 @@ use std::{
 
 use chrono::Local;
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use comfy_table::Table;
 use console::Style;
 use dialoguer::Confirm;
 use dirs::config_dir;
 
 use crate::{
-    db::{DB, DBFile, DbItem},
+    db::{DBFile, DbItem, DB},
     sqlite::SqliteDB,
 };
 
@@ -132,27 +133,44 @@ fn list_items(file: &dyn DBFile, what: ListWhat) {
         ListWhat::Undone => file.list_undone(),
     }
     .unwrap();
+
     let stat_style = Style::new().bold();
     let mut done_count = 0;
     let total = items.len();
+    let mut table = Table::new();
+    let mut header = vec!["ID".to_string()];
+    file.schema().unwrap().fields.into_iter().for_each(|f| {
+        header.push(f.name);
+    });
+    header.push("Done".to_string());
+    table.load_preset("││──╞═╪╡│    ┬┴┌┐└┘").set_header(header);
     for i in items {
-        let line = format!("{}. {}", i.id, i.name);
+        // let line = format!("{}. {}", i.id, i.name);
+        let done_str = i
+            .completed_at
+            .map_or("".to_string(), |dt| dt.format("%Y-%m-%d %H:%M").to_string());
+        table.add_row(vec![
+            i.id.to_string(),
+            i.fields[0].value.to_string(),
+            done_str,
+        ]);
         if i.completed_at.is_none() {
-            println!("{line}");
+            // println!("{line}");
         } else {
             done_count += 1;
-            println!("{} \u{2705}", line);
+            // println!("{} \u{2705}", line);
         }
     }
-    if what == ListWhat::All {
-        let stat = format!(
-            "Total: done {} of {} ({:.2}%)",
-            done_count,
-            total,
-            (done_count as f64) / (total as f64) * 100.0
-        );
-        println!("{}", stat_style.apply_to(stat));
-    }
+    // if what == ListWhat::All {
+    //     let stat = format!(
+    //         "Total: done {} of {} ({:.2}%)",
+    //         done_count,
+    //         total,
+    //         (done_count as f64) / (total as f64) * 100.0
+    //     );
+    //     println!("{}", stat_style.apply_to(stat));
+    // }
+    println!("{table}");
 }
 
 fn add_item(file: &dyn DBFile, item_name: &str) {
@@ -183,7 +201,7 @@ fn get(file: &dyn DBFile, id: u32) {
 
 fn get_random(file: &dyn DBFile) {
     if let Some(item) = file.get_random().unwrap() {
-        println!("Random item is {}: {}", item.id, item.name);
+        println!("Random item is {}: {}", item.id, item.fields[0].value);
         mark_done(file, item);
     } else {
         println!("All items are complete");
@@ -205,7 +223,7 @@ fn find_by_name(file: &dyn DBFile, name: &str) {
     let items = file.find(name).unwrap();
     if !items.is_empty() {
         for item in items {
-            println!("{}. {}", item.id, item.name);
+            println!("{}. {}", item.id, item.fields[0].value);
         }
     } else {
         println!("No matching items found");

@@ -8,7 +8,7 @@ use std::{
 use anyhow::{Context, Result, anyhow};
 use rusqlite::{Connection, OptionalExtension, Params, Row, params};
 
-use crate::db::{DB, DBFile, DbItem};
+use crate::db::{DB, DBFile, DbField, DbFieldDesc, DbFieldType, DbItem, DbSchema, DbValue};
 
 pub struct SqliteDB {
     path: PathBuf,
@@ -24,6 +24,7 @@ impl SqliteDB {
 
 struct SqliteFile {
     connection: Connection,
+    schema: DbSchema,
 }
 
 impl DB for SqliteDB {
@@ -73,7 +74,15 @@ impl DB for SqliteDB {
             (),
         )
         .context("Cannot initialize DB")?;
-        Ok(Box::new(SqliteFile { connection: conn }))
+        Ok(Box::new(SqliteFile {
+            connection: conn,
+            schema: DbSchema {
+                fields: vec![DbFieldDesc {
+                    name: "name".to_string(),
+                    field_type: DbFieldType::Text,
+                }],
+            },
+        }))
     }
 
     fn delete(&self, name: &str) -> Result<()> {
@@ -85,10 +94,23 @@ impl DB for SqliteDB {
 }
 
 impl SqliteFile {
-    fn to_db_item(row: &Row) -> rusqlite::Result<DbItem> {
+    fn to_db_item(&self, row: &Row) -> rusqlite::Result<DbItem> {
+        let fields: rusqlite::Result<Vec<DbField>> = self.schema
+            .fields
+            .iter()
+            .map(|f| {
+                let value = match f.field_type {
+                    DbFieldType::Text => DbValue::Text(row.get(f.name.as_str())?),
+                    DbFieldType::Number => DbValue::Number(row.get(f.name.as_str())?),
+                    DbFieldType::Boolean => DbValue::Boolean(row.get(f.name.as_str())?),
+                    DbFieldType::DateTime => DbValue::DateTime(row.get(f.name.as_str())?),
+                };
+                Ok(DbField { name: f.name.clone(), value })
+            })
+            .collect();
         Ok(DbItem {
             id: row.get("id")?,
-            name: row.get("name")?,
+            fields: fields?,
             completed_at: row.get("done_at")?,
         })
     }
@@ -106,13 +128,17 @@ impl SqliteFile {
             .unwrap_or(base_query);
         q.push_str(&format!(" ORDER BY {ord}"));
         let mut stmt = self.connection.prepare(&q)?;
-        let iter = stmt.query_map(params, Self::to_db_item)?;
+        let iter = stmt.query_map(params, |row| self.to_db_item(row))?;
         iter.collect::<rusqlite::Result<Vec<_>>>()
             .context("Item query error")
     }
 }
 
 impl DBFile for SqliteFile {
+    fn schema(&self) -> Result<DbSchema> {
+        Ok(self.schema.clone())
+    }
+
     fn insert(&self, item_name: &str) -> Result<()> {
         self.connection
             .execute("INSERT INTO items (name) VALUES(?1)", params![item_name])
@@ -153,7 +179,7 @@ impl DBFile for SqliteFile {
                    ORDER BY random()
                    LIMIT 1",
                 [],
-                Self::to_db_item,
+                |row| self.to_db_item(row),
             )
             .optional()
             .context("Query error")
@@ -164,7 +190,7 @@ impl DBFile for SqliteFile {
             .query_one(
                 "SELECT id, name, done_at FROM items WHERE id=?1",
                 params![id],
-                Self::to_db_item,
+                |row| self.to_db_item(row),
             )
             .optional()
             .context("Query error")
