@@ -149,11 +149,11 @@ fn list_items(file: &dyn DBFile, what: ListWhat) {
         let done_str = i
             .completed_at
             .map_or("".to_string(), |dt| dt.format("%Y-%m-%d %H:%M").to_string());
-        table.add_row(vec![
-            i.id.to_string(),
-            i.fields[0].value.to_string(),
-            done_str,
-        ]);
+        let mut row = Vec::with_capacity(i.fields.len() + 2);
+        row.push(i.id.to_string());
+        row.extend(i.fields.iter().map(|f| f.value.to_string()));
+        row.push(done_str);
+        table.add_row(row);
         if i.completed_at.is_none() {
             // println!("{line}");
         } else {
@@ -201,7 +201,11 @@ fn get(file: &dyn DBFile, id: u32) {
 
 fn get_random(file: &dyn DBFile) {
     if let Some(item) = file.get_random().unwrap() {
-        println!("Random item is {}: {}", item.id, item.fields[0].value);
+        let fields = item.fields.iter()
+            .map(|f| f.value.to_string())
+            .collect::<Vec<_>>()
+            .join(" - ");
+        println!("Random item is {}: {}", item.id, fields);
         mark_done(file, item);
     } else {
         println!("All items are complete");
@@ -231,14 +235,15 @@ fn find_by_name(file: &dyn DBFile, name: &str) {
 }
 
 fn new_file(db: &impl DB, name: &str, source: Option<String>) {
-    let file = db.open(name).unwrap();
-    if let Some(from_file) = source {
-        let ff = File::open(from_file).unwrap();
-        let lines = BufReader::new(ff).lines();
-        for line in lines.map_while(Result::ok) {
-            file.insert(&line).unwrap();
-        }
-    }
+    unimplemented!("Not implemented yet");
+    // let file = db.open(name).unwrap();
+    // if let Some(from_file) = source {
+    //     let ff = File::open(from_file).unwrap();
+    //     let lines = BufReader::new(ff).lines();
+    //     for line in lines.map_while(Result::ok) {
+    //         file.insert(&line).unwrap();
+    //     }
+    // }
 }
 
 fn delete(db: &impl DB, name: &str) {

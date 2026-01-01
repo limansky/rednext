@@ -5,10 +5,14 @@ use std::{
     result,
 };
 
-use anyhow::{Context, Result, anyhow};
-use rusqlite::{Connection, OptionalExtension, Params, Row, params};
+use anyhow::{anyhow, Context, Result};
+use rusqlite::{
+    params,
+    types::{FromSql, FromSqlError, FromSqlResult, ValueRef},
+    Connection, OptionalExtension, Params, Row,
+};
 
-use crate::db::{DB, DBFile, DbField, DbFieldDesc, DbFieldType, DbItem, DbSchema, DbValue};
+use crate::db::{DBFile, DbField, DbFieldDesc, DbFieldType, DbItem, DbSchema, DbValue, DB};
 
 pub struct SqliteDB {
     path: PathBuf,
@@ -19,6 +23,21 @@ impl SqliteDB {
         SqliteDB {
             path: db_path.to_path_buf(),
         }
+    }
+
+    fn read_schema(conn: &Connection) -> rusqlite::Result<DbSchema> {
+        let mut stmt = conn.prepare("SELECT name, datatype FROM schema ORDER BY idx")?;
+        let fields = stmt
+            .query_map([], |row| {
+                let field_name: String = row.get(0)?;
+                let field_type: DbFieldType = row.get(1)?;
+                Ok(DbFieldDesc {
+                    name: field_name,
+                    field_type,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(DbSchema { fields })
     }
 }
 
@@ -51,7 +70,7 @@ impl DB for SqliteDB {
         }
     }
 
-    fn open(&self, name: &str) -> Result<Box<dyn DBFile>> {
+    fn create(&self, name: &str, schema: DbSchema) -> Result<Box<dyn DBFile>> {
         if !self.path.exists() {
             fs::create_dir_all(&self.path).context("Cannot create directory")?;
         }
@@ -59,29 +78,19 @@ impl DB for SqliteDB {
         if !self.path.is_dir() {
             return Err(anyhow!("{:?} is not a directory", self.path));
         }
+        unimplemented!("note imp");
+    }
 
+    fn open(&self, name: &str) -> Result<Box<dyn DBFile>> {
         let mut path = self.path.clone();
         path.push(name);
         path.set_extension("db");
         let conn = Connection::open(path).context("Cannot open DB")?;
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS items(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE,
-                done_at TIMESTAMP,
-                comment TEXT
-        )",
-            (),
-        )
-        .context("Cannot initialize DB")?;
+        let schema = Self::read_schema(&conn).context("Cannot read schema")?;
+
         Ok(Box::new(SqliteFile {
             connection: conn,
-            schema: DbSchema {
-                fields: vec![DbFieldDesc {
-                    name: "name".to_string(),
-                    field_type: DbFieldType::Text,
-                }],
-            },
+            schema,
         }))
     }
 
@@ -95,7 +104,8 @@ impl DB for SqliteDB {
 
 impl SqliteFile {
     fn to_db_item(&self, row: &Row) -> rusqlite::Result<DbItem> {
-        let fields: rusqlite::Result<Vec<DbField>> = self.schema
+        let fields: rusqlite::Result<Vec<DbField>> = self
+            .schema
             .fields
             .iter()
             .map(|f| {
@@ -105,7 +115,10 @@ impl SqliteFile {
                     DbFieldType::Boolean => DbValue::Boolean(row.get(f.name.as_str())?),
                     DbFieldType::DateTime => DbValue::DateTime(row.get(f.name.as_str())?),
                 };
-                Ok(DbField { name: f.name.clone(), value })
+                Ok(DbField {
+                    name: f.name.clone(),
+                    value,
+                })
             })
             .collect();
         Ok(DbItem {
@@ -122,7 +135,7 @@ impl SqliteFile {
         order_by: Option<&str>,
     ) -> Result<Vec<DbItem>> {
         let ord = order_by.unwrap_or("id");
-        let base_query = "SELECT id, name, done_at FROM items".to_string();
+        let base_query = self.base_select();
         let mut q = filter
             .map(|c| format!("{base_query} WHERE {c}"))
             .unwrap_or(base_query);
@@ -131,6 +144,17 @@ impl SqliteFile {
         let iter = stmt.query_map(params, |row| self.to_db_item(row))?;
         iter.collect::<rusqlite::Result<Vec<_>>>()
             .context("Item query error")
+    }
+
+    fn base_select(&self) -> String {
+        let fields = self
+            .schema
+            .fields
+            .iter()
+            .map(|f| f.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("SELECT id, {fields}, done_at FROM items")
     }
 }
 
@@ -171,13 +195,16 @@ impl DBFile for SqliteFile {
     }
 
     fn get_random(&self) -> Result<Option<DbItem>> {
+        let base_query = self.base_select();
         self.connection
             .query_one(
-                "SELECT id, name, done_at
-                   FROM items
-                   WHERE done_at IS NULL
-                   ORDER BY random()
-                   LIMIT 1",
+                format!(
+                    "{base_query}
+                     WHERE done_at IS NULL
+                     ORDER BY random()
+                     LIMIT 1"
+                )
+                .as_str(),
                 [],
                 |row| self.to_db_item(row),
             )
@@ -186,9 +213,10 @@ impl DBFile for SqliteFile {
     }
 
     fn get(&self, id: u32) -> Result<Option<DbItem>> {
+        let base_query = self.base_select();
         self.connection
             .query_one(
-                "SELECT id, name, done_at FROM items WHERE id=?1",
+                format!("{base_query} WHERE id=?1").as_str(),
                 params![id],
                 |row| self.to_db_item(row),
             )
@@ -222,5 +250,14 @@ impl DBFile for SqliteFile {
         } else {
             Err(anyhow!("Item with id {id} is not found"))
         }
+    }
+}
+
+impl FromSql for DbFieldType {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        value
+            .as_str()?
+            .parse()
+            .map_err(|e| FromSqlError::Other(Box::new(e)))
     }
 }

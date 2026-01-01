@@ -2,11 +2,13 @@ use std::fmt::{Display, Formatter};
 
 use anyhow::Result;
 use chrono::NaiveDateTime;
+use strum::EnumString;
 
 pub trait DB {
     fn list_files(&self) -> Result<Vec<String>>;
     fn open(&self, name: &str) -> Result<Box<dyn DBFile>>;
     fn delete(&self, name: &str) -> Result<()>;
+    fn create(&self, name: &str, schema: DbSchema) -> Result<Box<dyn DBFile>>;
 }
 
 pub trait DBFile {
@@ -34,7 +36,7 @@ pub struct DbFieldDesc {
     pub field_type: DbFieldType,
 }
 
-#[derive(Clone)]
+#[derive(Clone, EnumString)]
 pub enum DbFieldType {
     Text,
     Number,
