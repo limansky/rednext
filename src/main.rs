@@ -145,7 +145,6 @@ fn list_items(file: &dyn DBFile, what: ListWhat) {
     header.push("Done".to_string());
     table.load_preset("││──╞═╪╡│    ┬┴┌┐└┘").set_header(header);
     for i in items {
-        // let line = format!("{}. {}", i.id, i.name);
         let done_str = i
             .completed_at
             .map_or("".to_string(), |dt| dt.format("%Y-%m-%d %H:%M").to_string());
@@ -153,24 +152,21 @@ fn list_items(file: &dyn DBFile, what: ListWhat) {
         row.push(i.id.to_string());
         row.extend(i.fields.iter().map(|f| f.value.to_string()));
         row.push(done_str);
-        table.add_row(row);
-        if i.completed_at.is_none() {
-            // println!("{line}");
-        } else {
+        if i.completed_at.is_some() {
             done_count += 1;
-            // println!("{} \u{2705}", line);
         }
+        table.add_row(row);
     }
-    // if what == ListWhat::All {
-    //     let stat = format!(
-    //         "Total: done {} of {} ({:.2}%)",
-    //         done_count,
-    //         total,
-    //         (done_count as f64) / (total as f64) * 100.0
-    //     );
-    //     println!("{}", stat_style.apply_to(stat));
-    // }
     println!("{table}");
+    if what == ListWhat::All {
+        let stat = format!(
+            "Total: done {} of {} ({:.2}%)",
+            done_count,
+            total,
+            (done_count as f64) / (total as f64) * 100.0
+        );
+        println!("{}", stat_style.apply_to(stat));
+    }
 }
 
 fn add_item(file: &dyn DBFile, item_name: &str) {
