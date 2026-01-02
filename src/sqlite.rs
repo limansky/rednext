@@ -191,7 +191,15 @@ impl DBFile for SqliteFile {
 
     fn find(&self, item_name: &str) -> Result<Vec<DbItem>> {
         let pattern = format!("%{item_name}%");
-        self.select_items(Some("name LIKE ?1"), params![pattern], None)
+        let fields = self.schema.fields.iter().flat_map(|f| {
+            if f.field_type == DbFieldType::Text {
+                Some(format!("{} LIKE ?1", f.name))
+            } else {
+                None
+            }
+        });
+        let filter = fields.collect::<Vec<_>>().join(" OR ");
+        self.select_items(Some(filter.as_str()), params![pattern], None)
     }
 
     fn get_random(&self) -> Result<Option<DbItem>> {

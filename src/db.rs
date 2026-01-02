@@ -36,7 +36,7 @@ pub struct DbFieldDesc {
     pub field_type: DbFieldType,
 }
 
-#[derive(Clone, EnumString)]
+#[derive(Clone, EnumString, PartialEq, Eq)]
 pub enum DbFieldType {
     Text,
     Number,

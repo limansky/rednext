@@ -199,13 +199,18 @@ fn get(file: &dyn DBFile, id: u32) {
     }
 }
 
+fn item_fields_to_string(item: &DbItem) -> String {
+    item.fields
+        .iter()
+        .map(|f| f.value.to_string())
+        .collect::<Vec<_>>()
+        .join(" - ")
+}
+
 fn get_random(file: &dyn DBFile) {
     if let Some(item) = file.get_random().unwrap() {
-        let fields = item.fields.iter()
-            .map(|f| f.value.to_string())
-            .collect::<Vec<_>>()
-            .join(" - ");
-        println!("Random item is {}: {}", item.id, fields);
+        let fields_str = item_fields_to_string(&item);
+        println!("Random item is {}: {}", item.id, fields_str);
         mark_done(file, item);
     } else {
         println!("All items are complete");
@@ -227,7 +232,8 @@ fn find_by_name(file: &dyn DBFile, name: &str) {
     let items = file.find(name).unwrap();
     if !items.is_empty() {
         for item in items {
-            println!("{}. {}", item.id, item.fields[0].value);
+            let fields_str = item_fields_to_string(&item);
+            println!("{}. {}", item.id, fields_str);
         }
     } else {
         println!("No matching items found");
