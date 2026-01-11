@@ -1,17 +1,14 @@
-use std::{
-    fs::File,
-    io::{BufRead, BufReader},
-};
+use std::{fmt::Display, str::FromStr};
 
-use chrono::Local;
+use chrono::{Local, NaiveDate, NaiveDateTime};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use comfy_table::Table;
 use console::Style;
-use dialoguer::Confirm;
+use dialoguer::{Confirm, Input};
 use dirs::config_dir;
 
 use crate::{
-    db::{DBFile, DbItem, DB},
+    db::{DBFile, DbField, DbFieldType, DbItem, DbValue, DB},
     sqlite::SqliteDB,
 };
 
@@ -57,8 +54,8 @@ enum ItemsAction {
         what: ListWhat,
     },
 
-    /// Add new Item
-    Add { name: String },
+    /// Interactively add a new item
+    Add,
 
     /// Delete item by ID
     Delete { id: u32 },
@@ -107,7 +104,7 @@ fn main() {
             let file = db.open(&ip.name).unwrap();
             match ip.action {
                 ItemsAction::List { what } => list_items(file.as_ref(), what),
-                ItemsAction::Add { name } => add_item(file.as_ref(), &name),
+                ItemsAction::Add => add_item(file.as_ref()),
                 ItemsAction::Delete { id } => delete_item(file.as_ref(), id),
                 ItemsAction::Get { id } => get(file.as_ref(), id),
                 ItemsAction::GetRandom => get_random(file.as_ref()),
@@ -169,8 +166,73 @@ fn list_items(file: &dyn DBFile, what: ListWhat) {
     }
 }
 
-fn add_item(file: &dyn DBFile, item_name: &str) {
-    file.insert(item_name).unwrap();
+#[derive(Debug)]
+struct DateParseError;
+
+#[derive(Clone)]
+struct Date(NaiveDateTime);
+
+impl FromStr for Date {
+    type Err = DateParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let dt_fmt = "%Y-%m-%d %H:%M:%S";
+        let d_fmt = "%Y-%m-%d";
+        NaiveDateTime::parse_from_str(s, dt_fmt)
+            .or(NaiveDate::parse_from_str(s, d_fmt).map(|d| d.and_hms_opt(0, 0, 0).unwrap()))
+            .map(|d| Date(d))
+            .map_err(|_| DateParseError)
+    }
+}
+
+impl Display for Date {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Display for DateParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Failed to parse date")
+    }
+}
+
+fn add_item(file: &dyn DBFile) {
+    let mut fields = Vec::new();
+    for field in file.schema().unwrap().fields.iter() {
+        let val = match field.field_type {
+            DbFieldType::Text => {
+                let input: String = Input::new()
+                    .with_prompt(&field.name)
+                    .interact_text()
+                    .unwrap();
+                DbValue::Text(input)
+            }
+            DbFieldType::Number => {
+                let input: i32 = Input::new()
+                    .with_prompt(&field.name)
+                    .interact_text()
+                    .unwrap();
+                DbValue::Number(input)
+            }
+            DbFieldType::Boolean => {
+                let input: bool = Confirm::new().with_prompt(&field.name).interact().unwrap();
+                DbValue::Boolean(input)
+            }
+            DbFieldType::DateTime => {
+                let input: Date = Input::new()
+                    .with_prompt(&field.name)
+                    .interact_text()
+                    .unwrap();
+                DbValue::DateTime(input.0)
+            }
+        };
+        fields.push(DbField {
+            name: field.name.clone(),
+            value: val,
+        });
+    }
+    file.insert(&fields).unwrap();
 }
 
 fn delete_item(file: &dyn DBFile, id: u32) {
@@ -256,5 +318,36 @@ fn delete(db: &impl DB, name: &str) {
 
     if confirmation {
         db.delete(name).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+
+    use crate::Date;
+
+    #[test]
+    fn test_parse_date() {
+        let date: Date = "2026-01-11".parse().unwrap();
+        assert_eq!(
+            date.0,
+            NaiveDateTime::new(
+                NaiveDate::from_ymd_opt(2026, 1, 11).unwrap(),
+                NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+            )
+        );
+    }
+
+    #[test]
+    fn test_parse_date_time() {
+        let date: Date = "2026-01-11 15:30:00".parse().unwrap();
+        assert_eq!(
+            date.0,
+            NaiveDateTime::new(
+                NaiveDate::from_ymd_opt(2026, 1, 11).unwrap(),
+                NaiveTime::from_hms_opt(15, 30, 0).unwrap(),
+            )
+        );
     }
 }

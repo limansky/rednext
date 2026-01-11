@@ -8,7 +8,7 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use rusqlite::{
     params,
-    types::{FromSql, FromSqlError, FromSqlResult, ValueRef},
+    types::{FromSql, FromSqlError, FromSqlResult, Value, ValueRef},
     Connection, OptionalExtension, Params, Row,
 };
 
@@ -151,7 +151,7 @@ impl SqliteFile {
             .schema
             .fields
             .iter()
-            .map(|f| f.name.as_str())
+            .map(|f| format!("\"{}\"", f.name.as_str()))
             .collect::<Vec<_>>()
             .join(", ");
         format!("SELECT id, {fields}, done_at FROM items")
@@ -163,9 +163,30 @@ impl DBFile for SqliteFile {
         Ok(self.schema.clone())
     }
 
-    fn insert(&self, item_name: &str) -> Result<()> {
+    fn insert(&self, fields: &[DbField]) -> Result<()> {
+        let field_names = fields
+            .iter()
+            .map(|f| format!("\"{}\"", f.name.as_str()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let placeholders = (1..=fields.len())
+            .map(|i| format!("?{}", i))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let values: Vec<Value> = fields
+            .iter()
+            .map(|f| match &f.value {
+                DbValue::Text(s) => s.clone().into(),
+                DbValue::Number(n) => (*n).into(),
+                DbValue::Boolean(b) => (*b).into(),
+                DbValue::DateTime(dt) => dt.format("%F").to_string().into(),
+            })
+            .collect::<Vec<_>>();
         self.connection
-            .execute("INSERT INTO items (name) VALUES(?1)", params![item_name])
+            .execute(
+                format!("INSERT INTO items ({field_names}) VALUES({placeholders})").as_str(),
+                rusqlite::params_from_iter(values),
+            )
             .context("Cannot insert item")?;
         Ok(())
     }
