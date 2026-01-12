@@ -179,7 +179,7 @@ impl DBFile for SqliteFile {
                 DbValue::Text(s) => s.clone().into(),
                 DbValue::Number(n) => (*n).into(),
                 DbValue::Boolean(b) => (*b).into(),
-                DbValue::DateTime(dt) => dt.format("%F").to_string().into(),
+                DbValue::DateTime(dt) => dt.format("%Y-%m-%dT%H:%M:%S").to_string().into(),
             })
             .collect::<Vec<_>>();
         self.connection
@@ -288,5 +288,94 @@ impl FromSql for DbFieldType {
             .as_str()?
             .parse()
             .map_err(|e| FromSqlError::Other(Box::new(e)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{NaiveDate, NaiveDateTime};
+    use rusqlite::Connection;
+
+    use crate::{
+        db::{DBFile, DbField, DbFieldDesc, DbFieldType, DbSchema, DbValue},
+        sqlite::SqliteFile,
+    };
+
+    fn create_file() -> SqliteFile {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute(
+            "CREATE TABLE items(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            txt TEXT,
+            due TIMESTAMP,
+            n NUMBER,
+            bool BOOLEAN,
+            done_at TIMESTAMP,
+            comment TEXT
+          )",
+            [],
+        )
+        .unwrap();
+        let schema = DbSchema {
+            fields: vec![
+                DbFieldDesc::new("txt", DbFieldType::Text),
+                DbFieldDesc::new("due", DbFieldType::DateTime),
+                DbFieldDesc::new("bool", DbFieldType::Boolean),
+                DbFieldDesc::new("n", DbFieldType::Number),
+            ],
+        };
+        SqliteFile {
+            connection: conn,
+            schema: schema,
+        }
+    }
+
+    #[test]
+    fn test_insert() {
+        let file = create_file();
+        assert!(file.list_items().unwrap().is_empty());
+        file.insert(&[
+            DbField {
+                name: "txt".to_string(),
+                value: DbValue::Text("task 1".to_string()),
+            },
+            DbField {
+                name: "due".to_string(),
+                value: DbValue::DateTime(
+                    chrono::NaiveDate::from_ymd_opt(2024, 7, 1)
+                        .unwrap()
+                        .and_hms_opt(1,20, 0)
+                        .unwrap(),
+                ),
+            },
+            DbField {
+                name: "bool".to_string(),
+                value: DbValue::Boolean(true),
+            },
+            DbField {
+                name: "n".to_string(),
+                value: DbValue::Number(42),
+            },
+        ])
+        .unwrap();
+
+        let items = file.list_items().unwrap();
+        assert_eq!(items.len(), 1);
+        let item = &items[0];
+        assert_eq!(item.id, 1);
+        assert_eq!(item.fields.len(), 4);
+        assert_eq!(item.fields[0].name, "txt");
+        assert_eq!(item.fields[0].value, DbValue::Text("task 1".to_string()));
+        assert_eq!(item.fields[1].name, "due");
+        assert_eq!(item.fields[1].value, DbValue::DateTime(
+            NaiveDate::from_ymd_opt(2024, 7, 1)
+                .unwrap()
+                .and_hms_opt(1,20, 0)
+                .unwrap(),
+        ));
+        assert_eq!(item.fields[2].name, "bool");
+        assert_eq!( item.fields[2].value, DbValue::Boolean(true));
+        assert_eq!(item.fields[3].name, "n");
+        assert_eq!( item.fields[3].value, DbValue::Number(42));
     }
 }
