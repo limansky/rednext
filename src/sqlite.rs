@@ -39,6 +39,52 @@ impl SqliteDB {
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(DbSchema { fields })
     }
+
+    fn write_schema(conn: &mut Connection, schema: &DbSchema) -> rusqlite::Result<()> {
+        conn.execute(
+            "CREATE TABLE schema (
+            name TEXT PRIMARY KEY,
+            datatype TEXT NOT NULL,
+            idx INTEGER NOT NULL
+          )",
+            [],
+        )?;
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare("INSERT INTO schema (name, datatype, idx) VALUES (?1, ?2, ?3)")?;
+            for (idx, field) in schema.fields.iter().enumerate() {
+                stmt.execute(params![field.name, field.field_type.to_string(), idx as u32])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn create_items_table(conn: &mut Connection, schema: &DbSchema) -> rusqlite::Result<()> {
+        let field_defs = schema
+            .fields
+            .iter()
+            .map(|f| {
+                let sql_type = match f.field_type {
+                    DbFieldType::Text => "TEXT",
+                    DbFieldType::Number => "NUMBER",
+                    DbFieldType::Boolean => "BOOLEAN",
+                    DbFieldType::DateTime => "TIMESTAMP",
+                };
+                format!("\"{}\" {}", f.name.as_str(), sql_type)
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let create_table_sql = format!(
+            "CREATE TABLE items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            {field_defs},
+            done_at TIMESTAMP
+          )"
+        );
+        conn.execute(create_table_sql.as_str(), [])?;
+        Ok(())
+    }
 }
 
 struct SqliteFile {
@@ -78,7 +124,20 @@ impl DB for SqliteDB {
         if !self.path.is_dir() {
             return Err(anyhow!("{:?} is not a directory", self.path));
         }
-        unimplemented!("note imp");
+
+        let file_path = self.path.join(format!("{}.db", name));
+
+        if file_path.exists() {
+            return Err(anyhow!("Database file {:?} already exists", file_path));
+        }
+
+        let mut conn = Connection::open(&file_path).context("Cannot create DB file")?;
+        Self::write_schema(&mut conn, &schema).context("Cannot write schema")?;
+        Self::create_items_table(&mut conn, &schema).context("Cannot create items table")?;
+        Ok(Box::new(SqliteFile {
+            connection: conn,
+            schema,
+        }))
     }
 
     fn open(&self, name: &str) -> Result<Box<dyn DBFile>> {
@@ -344,7 +403,7 @@ mod tests {
                 value: DbValue::DateTime(
                     chrono::NaiveDate::from_ymd_opt(2024, 7, 1)
                         .unwrap()
-                        .and_hms_opt(1,20, 0)
+                        .and_hms_opt(1, 20, 0)
                         .unwrap(),
                 ),
             },
@@ -367,15 +426,18 @@ mod tests {
         assert_eq!(item.fields[0].name, "txt");
         assert_eq!(item.fields[0].value, DbValue::Text("task 1".to_string()));
         assert_eq!(item.fields[1].name, "due");
-        assert_eq!(item.fields[1].value, DbValue::DateTime(
-            NaiveDate::from_ymd_opt(2024, 7, 1)
-                .unwrap()
-                .and_hms_opt(1,20, 0)
-                .unwrap(),
-        ));
+        assert_eq!(
+            item.fields[1].value,
+            DbValue::DateTime(
+                NaiveDate::from_ymd_opt(2024, 7, 1)
+                    .unwrap()
+                    .and_hms_opt(1, 20, 0)
+                    .unwrap(),
+            )
+        );
         assert_eq!(item.fields[2].name, "bool");
-        assert_eq!( item.fields[2].value, DbValue::Boolean(true));
+        assert_eq!(item.fields[2].value, DbValue::Boolean(true));
         assert_eq!(item.fields[3].name, "n");
-        assert_eq!( item.fields[3].value, DbValue::Number(42));
+        assert_eq!(item.fields[3].value, DbValue::Number(42));
     }
 }

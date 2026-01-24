@@ -4,11 +4,11 @@ use chrono::{Local, NaiveDate, NaiveDateTime};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use comfy_table::Table;
 use console::Style;
-use dialoguer::{Confirm, Input};
+use dialoguer::{Confirm, Input, Select};
 use dirs::config_dir;
 
 use crate::{
-    db::{DBFile, DbField, DbFieldType, DbItem, DbValue, DB},
+    db::{DB, DBFile, DbField, DbFieldDesc, DbFieldType, DbItem, DbSchema, DbValue},
     sqlite::SqliteDB,
 };
 
@@ -298,8 +298,46 @@ fn find_by_name(file: &dyn DBFile, name: &str) {
     }
 }
 
+fn enter_schema() -> DbSchema {
+    let mut fields = Vec::new();
+    loop {
+        let field_name: String = Input::new()
+            .with_prompt("Enter field name (or leave empty to finish)")
+            .allow_empty(true)
+            .interact_text()
+            .unwrap();
+        if field_name.is_empty() {
+            break;
+        }
+        let field_type = Select::new()
+            .with_prompt("Choose field type")
+            .items(&[
+                "Text",
+                "Number",
+                "Boolean",
+                "Timestamp",
+            ])
+            .default(0)
+            .interact()
+            .unwrap();
+        fields.push(DbFieldDesc {
+            name: field_name,
+            field_type: match field_type {
+                0 => DbFieldType::Text,
+                1 => DbFieldType::Number,
+                2 => DbFieldType::Boolean,
+                3 => DbFieldType::DateTime,
+                _ => unreachable!(),
+            },
+        });
+    }
+    DbSchema { fields }
+}
+
 fn new_file(db: &impl DB, name: &str, source: Option<String>) {
-    unimplemented!("Not implemented yet");
+
+    let schema = enter_schema();
+    db.create(name, schema).unwrap();
     // let file = db.open(name).unwrap();
     // if let Some(from_file) = source {
     //     let ff = File::open(from_file).unwrap();
