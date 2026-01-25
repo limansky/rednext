@@ -5,14 +5,13 @@ use std::{
     result,
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use rusqlite::{
-    params,
+    Connection, OptionalExtension, Params, Row, params,
     types::{FromSql, FromSqlError, FromSqlResult, Value, ValueRef},
-    Connection, OptionalExtension, Params, Row,
 };
 
-use crate::db::{DBFile, DbField, DbFieldDesc, DbFieldType, DbItem, DbSchema, DbValue, DB};
+use crate::db::{DB, DBFile, DbField, DbFieldDesc, DbFieldType, DbItem, DbSchema, DbValue};
 
 pub struct SqliteDB {
     path: PathBuf,
@@ -51,9 +50,14 @@ impl SqliteDB {
         )?;
         let tx = conn.transaction()?;
         {
-            let mut stmt = tx.prepare("INSERT INTO schema (name, datatype, idx) VALUES (?1, ?2, ?3)")?;
+            let mut stmt =
+                tx.prepare("INSERT INTO schema (name, datatype, idx) VALUES (?1, ?2, ?3)")?;
             for (idx, field) in schema.fields.iter().enumerate() {
-                stmt.execute(params![field.name, field.field_type.to_string(), idx as u32])?;
+                stmt.execute(params![
+                    field.name,
+                    field.field_type.to_string(),
+                    idx as u32
+                ])?;
             }
         }
         tx.commit()?;
@@ -218,8 +222,8 @@ impl SqliteFile {
 }
 
 impl DBFile for SqliteFile {
-    fn schema(&self) -> Result<DbSchema> {
-        Ok(self.schema.clone())
+    fn schema(&self) -> DbSchema {
+        self.schema.clone()
     }
 
     fn insert(&self, fields: &[DbField]) -> Result<()> {

@@ -1,5 +1,6 @@
-use std::{fmt::Display, str::FromStr};
+use std::{error::Error, fmt::Display, str::FromStr};
 
+use anyhow::Context;
 use chrono::{Local, NaiveDate, NaiveDateTime};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use comfy_table::Table;
@@ -111,7 +112,7 @@ fn main() {
                 ItemsAction::Find { name } => find_by_name(file.as_ref(), &name),
             }
         }
-        Action::New { name, from_file } => new_file(&db, &name, from_file),
+        Action::New { name, from_file } => new_file(&db, &name, from_file).unwrap(),
         Action::Delete { name } => delete(&db, &name),
     }
 }
@@ -136,7 +137,7 @@ fn list_items(file: &dyn DBFile, what: ListWhat) {
     let total = items.len();
     let mut table = Table::new();
     let mut header = vec!["ID".to_string()];
-    file.schema().unwrap().fields.into_iter().for_each(|f| {
+    file.schema().fields.into_iter().for_each(|f| {
         header.push(f.name);
     });
     header.push("Done".to_string());
@@ -169,6 +170,8 @@ fn list_items(file: &dyn DBFile, what: ListWhat) {
 #[derive(Debug)]
 struct DateParseError;
 
+impl Error for DateParseError {}
+
 #[derive(Clone)]
 struct Date(NaiveDateTime);
 
@@ -199,7 +202,7 @@ impl Display for DateParseError {
 
 fn add_item(file: &dyn DBFile) {
     let mut fields = Vec::new();
-    for field in file.schema().unwrap().fields.iter() {
+    for field in file.schema().fields.iter() {
         let val = match field.field_type {
             DbFieldType::Text => {
                 let input: String = Input::new()
@@ -311,41 +314,62 @@ fn enter_schema() -> DbSchema {
         }
         let field_type = Select::new()
             .with_prompt("Choose field type")
-            .items(&[
-                "Text",
-                "Number",
-                "Boolean",
-                "Timestamp",
-            ])
+            .items(&["Text", "Number", "Boolean", "Timestamp"])
             .default(0)
             .interact()
             .unwrap();
-        fields.push(DbFieldDesc {
-            name: field_name,
-            field_type: match field_type {
+        fields.push(DbFieldDesc::new(
+            &field_name,
+            match field_type {
                 0 => DbFieldType::Text,
                 1 => DbFieldType::Number,
                 2 => DbFieldType::Boolean,
                 3 => DbFieldType::DateTime,
                 _ => unreachable!(),
             },
-        });
+        ));
     }
     DbSchema { fields }
 }
 
-fn new_file(db: &impl DB, name: &str, source: Option<String>) {
-
+fn new_file(db: &impl DB, name: &str, source: Option<String>) -> anyhow::Result<()> {
     let schema = enter_schema();
-    db.create(name, schema).unwrap();
-    // let file = db.open(name).unwrap();
-    // if let Some(from_file) = source {
-    //     let ff = File::open(from_file).unwrap();
-    //     let lines = BufReader::new(ff).lines();
-    //     for line in lines.map_while(Result::ok) {
-    //         file.insert(&line).unwrap();
-    //     }
-    // }
+    let file = db
+        .create(name, schema)
+        .context("Failed to create a new file")?;
+
+    if let Some(source) = source {
+        let mut reader = csv::Reader::from_path(source).unwrap();
+        for r in reader.records() {
+            let record = r.context("Incorrect CSV record")?;
+            let mut fields = Vec::new();
+            for (i, field_desc) in file.schema().fields.iter().enumerate() {
+                let str = record.get(i).context("Not enough fields in CSV record")?;
+                let value = match field_desc.field_type {
+                    DbFieldType::Text => DbValue::Text(str.to_string()),
+                    DbFieldType::Number => {
+                        let num: i32 = str.parse().context("Failed to parse number")?;
+                        DbValue::Number(num)
+                    }
+                    DbFieldType::Boolean => {
+                        let b: bool = str.parse().context("Failed to parse boolean")?;
+                        DbValue::Boolean(b)
+                    }
+                    DbFieldType::DateTime => {
+                        let date: Date = str.parse().context("Failed to parse date")?;
+                        DbValue::DateTime(date.0)
+                    }
+                };
+                fields.push(DbField {
+                    name: field_desc.name.clone(),
+                    value,
+                });
+            }
+            file.insert(&fields).unwrap();
+        }
+    }
+
+    Ok(())
 }
 
 fn delete(db: &impl DB, name: &str) {

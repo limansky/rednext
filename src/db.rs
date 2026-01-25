@@ -12,7 +12,7 @@ pub trait DB {
 }
 
 pub trait DBFile {
-    fn schema(&self) -> Result<DbSchema>;
+    fn schema(&self) -> DbSchema;
     fn list_items(&self) -> Result<Vec<DbItem>>;
     fn list_done(&self) -> Result<Vec<DbItem>>;
     fn list_undone(&self) -> Result<Vec<DbItem>>;
@@ -36,7 +36,7 @@ pub struct DbFieldDesc {
     pub field_type: DbFieldType,
 }
 
-impl DbFieldDesc  {
+impl DbFieldDesc {
     pub fn new(name: &str, field_type: DbFieldType) -> Self {
         Self {
             name: name.to_string(),
