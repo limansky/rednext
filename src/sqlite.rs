@@ -5,13 +5,14 @@ use std::{
     result,
 };
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use rusqlite::{
-    Connection, OptionalExtension, Params, Row, params,
+    params,
     types::{FromSql, FromSqlError, FromSqlResult, Value, ValueRef},
+    Connection, OptionalExtension, Params, Row,
 };
 
-use crate::db::{DB, DBFile, DbField, DbFieldDesc, DbFieldType, DbItem, DbSchema, DbValue};
+use crate::db::{DBFile, DbField, DbFieldDesc, DbFieldType, DbItem, DbSchema, DbValue, DB};
 
 pub struct SqliteDB {
     path: PathBuf,
@@ -356,7 +357,7 @@ impl FromSql for DbFieldType {
 
 #[cfg(test)]
 mod tests {
-    use chrono::{NaiveDate, NaiveDateTime};
+    use chrono::NaiveDate;
     use rusqlite::Connection;
 
     use crate::{
