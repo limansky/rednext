@@ -1,10 +1,16 @@
-use std::{error::Error, fmt::Display, str::FromStr};
+use std::{
+    error::Error,
+    fmt::Display,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 use anyhow::Context;
 use chrono::{Local, NaiveDate, NaiveDateTime};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use comfy_table::Table;
 use console::Style;
+use csv::{ReaderBuilder, Trim};
 use dialoguer::{Confirm, Input, Select};
 use dirs::config_dir;
 
@@ -27,8 +33,17 @@ enum Action {
     /// Create new file
     #[command(arg_required_else_help = true)]
     New {
+        /// New file name
         name: String,
-        from_file: Option<String>,
+        /// Import data from CSV file
+        from_file: Option<PathBuf>,
+        /// Use custom CSV delimiter
+        #[clap(long, short='d', value_parser=delimiter_parser)]
+        delimiter: Option<u8>,
+
+        /// Specify if CSV file has no header
+        #[clap(long, action)]
+        no_header: bool,
     },
 
     /// Delete file
@@ -60,6 +75,20 @@ enum ItemsAction {
 
     /// Delete item by ID
     Delete { id: u32 },
+
+    /// Import CSV file
+    Import {
+        /// file to be imported
+        file_name: PathBuf,
+
+        /// Use custom CSV delimiter
+        #[clap(long, short='d', value_parser=delimiter_parser)]
+        delimiter: Option<u8>,
+
+        /// Specify if CSV file has no header
+        #[clap(long, action)]
+        no_header: bool,
+    },
 
     /// Find item by name
     Find { name: String },
@@ -94,6 +123,25 @@ struct Params {
     action: Action,
 }
 
+fn delimiter_parser(s: &str) -> Result<u8, String> {
+    if s.starts_with("0x")
+        && let Ok(num) = u8::from_str_radix(&s[2..], 16)
+    {
+        Ok(num)
+    } else {
+        let sv = s.chars().collect::<Vec<_>>();
+        if sv.len() == 1 {
+            if sv[0].is_ascii() {
+                Ok(sv[0] as u8)
+            } else {
+                Err("Delimiter must be an ASCII character".to_string())
+            }
+        } else {
+            Err("Delimiter must be a single character or a HEX number".to_string())
+        }
+    }
+}
+
 fn main() {
     let params = Params::parse();
     let mut db_path = config_dir().unwrap();
@@ -107,12 +155,28 @@ fn main() {
                 ItemsAction::List { what } => list_items(file.as_ref(), what),
                 ItemsAction::Add => add_item(file.as_ref()),
                 ItemsAction::Delete { id } => delete_item(file.as_ref(), id),
+                ItemsAction::Import {
+                    file_name,
+                    delimiter,
+                    no_header,
+                } => import_csv(
+                    file.as_ref(),
+                    &file_name,
+                    no_header,
+                    delimiter.map(|d| d as u8),
+                )
+                .unwrap(),
                 ItemsAction::Get { id } => get(file.as_ref(), id),
                 ItemsAction::GetRandom => get_random(file.as_ref()),
                 ItemsAction::Find { name } => find_by_name(file.as_ref(), &name),
             }
         }
-        Action::New { name, from_file } => new_file(&db, &name, from_file).unwrap(),
+        Action::New {
+            name,
+            from_file,
+            delimiter,
+            no_header,
+        } => new_file(&db, &name, from_file, delimiter, no_header).unwrap(),
         Action::Delete { name } => delete(&db, &name),
     }
 }
@@ -332,41 +396,65 @@ fn enter_schema() -> DbSchema {
     DbSchema { fields }
 }
 
-fn new_file(db: &impl DB, name: &str, source: Option<String>) -> anyhow::Result<()> {
+fn new_file(
+    db: &impl DB,
+    name: &str,
+    source: Option<PathBuf>,
+    delimiter: Option<u8>,
+    no_header: bool,
+) -> anyhow::Result<()> {
     let schema = enter_schema();
     let file = db
         .create(name, schema)
         .context("Failed to create a new file")?;
 
     if let Some(source) = source {
-        let mut reader = csv::Reader::from_path(source).unwrap();
-        for r in reader.records() {
-            let record = r.context("Incorrect CSV record")?;
-            let mut fields = Vec::new();
-            for (i, field_desc) in file.schema().fields.iter().enumerate() {
-                let str = record.get(i).context("Not enough fields in CSV record")?;
-                let value = match field_desc.field_type {
-                    DbFieldType::Text => DbValue::Text(str.to_string()),
-                    DbFieldType::Number => {
-                        let num: i32 = str.parse().context("Failed to parse number")?;
-                        DbValue::Number(num)
-                    }
-                    DbFieldType::Boolean => {
-                        let b: bool = str.parse().context("Failed to parse boolean")?;
-                        DbValue::Boolean(b)
-                    }
-                    DbFieldType::DateTime => {
-                        let date: Date = str.parse().context("Failed to parse date")?;
-                        DbValue::DateTime(date.0)
-                    }
-                };
-                fields.push(DbField {
-                    name: field_desc.name.clone(),
-                    value,
-                });
-            }
-            file.insert(&fields).unwrap();
+        import_csv(file.as_ref(), &source, no_header, delimiter)
+    } else {
+        Ok(())
+    }
+}
+
+fn import_csv(
+    file: &dyn DBFile,
+    file_name: &Path,
+    no_header: bool,
+    delimiter: Option<u8>,
+) -> anyhow::Result<()> {
+    let mut reader = ReaderBuilder::new()
+        .delimiter(delimiter.unwrap_or(b','))
+        .has_headers(!no_header)
+        .trim(Trim::All)
+        .from_path(file_name)
+        .unwrap();
+    for r in reader.records() {
+        let record = r.context("Incorrect CSV record")?;
+        let mut fields = Vec::new();
+        for (i, field_desc) in file.schema().fields.iter().enumerate() {
+            let str = record.get(i).context("Not enough fields in CSV record")?;
+            let value = match field_desc.field_type {
+                DbFieldType::Text => DbValue::Text(str.to_string()),
+                DbFieldType::Number => {
+                    let num: i32 = str
+                        .parse()
+                        .context(format!("Failed to parse number '{str}'"))?;
+                    DbValue::Number(num)
+                }
+                DbFieldType::Boolean => {
+                    let b: bool = str.parse().context("Failed to parse boolean")?;
+                    DbValue::Boolean(b)
+                }
+                DbFieldType::DateTime => {
+                    let date: Date = str.parse().context("Failed to parse date")?;
+                    DbValue::DateTime(date.0)
+                }
+            };
+            fields.push(DbField {
+                name: field_desc.name.clone(),
+                value,
+            });
         }
+        file.insert(&fields).unwrap();
     }
 
     Ok(())
