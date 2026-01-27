@@ -159,13 +159,7 @@ fn main() {
                     file_name,
                     delimiter,
                     no_header,
-                } => import_csv(
-                    file.as_ref(),
-                    &file_name,
-                    no_header,
-                    delimiter,
-                )
-                .unwrap(),
+                } => import_csv(file.as_ref(), &file_name, no_header, delimiter).unwrap(),
                 ItemsAction::Get { id } => get(file.as_ref(), id),
                 ItemsAction::GetRandom => get_random(file.as_ref()),
                 ItemsAction::Find { name } => find_by_name(file.as_ref(), &name),
