@@ -163,7 +163,7 @@ fn main() {
                     file.as_ref(),
                     &file_name,
                     no_header,
-                    delimiter.map(|d| d as u8),
+                    delimiter,
                 )
                 .unwrap(),
                 ItemsAction::Get { id } => get(file.as_ref(), id),
@@ -247,7 +247,7 @@ impl FromStr for Date {
         let d_fmt = "%Y-%m-%d";
         NaiveDateTime::parse_from_str(s, dt_fmt)
             .or(NaiveDate::parse_from_str(s, d_fmt).map(|d| d.and_hms_opt(0, 0, 0).unwrap()))
-            .map(|d| Date(d))
+            .map(Date)
             .map_err(|_| DateParseError)
     }
 }
@@ -378,7 +378,7 @@ fn enter_schema() -> DbSchema {
         }
         let field_type = Select::new()
             .with_prompt("Choose field type")
-            .items(&["Text", "Number", "Boolean", "Timestamp"])
+            .items(["Text", "Number", "Boolean", "Timestamp"])
             .default(0)
             .interact()
             .unwrap();
