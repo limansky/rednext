@@ -7,7 +7,10 @@ edition = "2024"
 anyhow = "1.0.100"
 chrono = "0.4.43"
 clap = { version = "4.5.54", features = ["derive"] }
+comfy-table = "7.2.1"
 console = "0.16.2"
+csv = "1.4.0"
 dialoguer = "0.12.0"
 dirs = "6.0.0"
 rusqlite = { version = "0.38.0", features = ["chrono"] }
+strum = { version = "0.27.2", features = ["derive"] }
