@@ -10,8 +10,24 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  lint:
+    runs-on: ubuntu-latest
 
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt,clippy
+
+    - name: Check format
+      run: cargo fmt --all -- --check
+
+    - name: Run clippy
+      run: cargo clippy --all-targets --all-features -- -D warnings
+
+  build:
     runs-on: ${{ matrix.jobs.os }}
     strategy:
       matrix:
@@ -60,8 +76,6 @@ jobs:
       shell: bash
       run: echo "BUILD_CMD=cross" >> $GITHUB_ENV
 
-    - name: Check format
-      run: $BUILD_CMD fmt --check
     - name: Build
       run: $BUILD_CMD build --verbose
     - name: Run tests
