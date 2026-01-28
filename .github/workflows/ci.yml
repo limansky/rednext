@@ -53,6 +53,7 @@ jobs:
       uses: taiki-e/install-action@v2
       with:
         tool: cross
+        components: rustfmt
 
     - name: Overwrite build command env variable
       if: matrix.job.use-cross
