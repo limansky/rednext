@@ -77,6 +77,8 @@ jobs:
       run: echo "BUILD_CMD=cross" >> $GITHUB_ENV
 
     - name: Build
+      shell: bash
       run: $BUILD_CMD build --verbose
     - name: Run tests
+      shell: bash
       run: $BUILD_CMD test --verbose
