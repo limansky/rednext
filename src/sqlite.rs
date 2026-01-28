@@ -389,7 +389,7 @@ mod tests {
         };
         SqliteFile {
             connection: conn,
-            schema: schema,
+            schema,
         }
     }
 
