@@ -76,7 +76,7 @@ jobs:
       run: echo "BUILD_CMD=cross" >> $GITHUB_ENV
 
     - name: Install dependencies
-#      if: matrix.target == 'i686-unknown-linux-gnu'
+      if: matrix.os == 'ubuntu-latest'
       shell: bash
       run: sudo apt-get install gcc-multilib
 
