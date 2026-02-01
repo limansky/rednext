@@ -79,7 +79,7 @@ jobs:
       run: echo "BUILD_CMD=cross" >> $GITHUB_ENV
 
     - name: Install dependencies
-      if: matrix.os == 'ubuntu-latest'
+      if: matrix.job.os == 'ubuntu-latest'
       shell: bash
       run: sudo apt-get install gcc-multilib ${{ matrix.jobs.cross-cc || '' }}
 
