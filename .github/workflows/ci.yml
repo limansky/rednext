@@ -75,6 +75,11 @@ jobs:
       shell: bash
       run: echo "BUILD_CMD=cross" >> $GITHUB_ENV
 
+    - name: Install dependencies
+      if: matrix.target == 'i686-unknown-linux-gnu'
+      shell: bash
+      run: sudo apt-get install gcc-multilib
+
     - name: Build
       shell: bash
       run: $BUILD_CMD build --verbose --target ${{ matrix.jobs.target }}
