@@ -362,9 +362,14 @@ fn find_by_name(file: &dyn DBFile, name: &str) {
 fn enter_schema() -> DbSchema {
     let mut fields = Vec::new();
     loop {
+        let name_prompt = if fields.is_empty() {
+            "Enter field name"
+        } else {
+            "Enter field name (or leave empty to finish)"
+        };
         let field_name: String = Input::new()
-            .with_prompt("Enter field name (or leave empty to finish)")
-            .allow_empty(true)
+            .with_prompt(name_prompt)
+            .allow_empty(!fields.is_empty())
             .interact_text()
             .unwrap();
         if field_name.is_empty() {
