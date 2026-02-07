@@ -36,6 +36,8 @@ jobs:
             target: aarch64-unknown-linux-gnu
             use-cross: true
             cross-cc: aarch64-linux-gnu-gcc
+    env:
+      BUILD_CMD: cargo
 
     runs-on: ${{ matrix.jobs.os }}
 
