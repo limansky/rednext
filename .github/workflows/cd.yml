@@ -1,0 +1,106 @@
+name: Release
+
+on:
+  push:
+    tags:
+    - "v[0-9]+.[0-9]+.[0-9]+"
+    branches:
+    - master
+
+jobs:
+  release:
+    strategy:
+      matrix:
+        jobs:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            use-cross: false
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            use-cross: false
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            use-cross: false
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            use-cross: true
+          - os: ubuntu-latest
+            target: i686-unknown-linux-gnu
+            use-cross: true
+            cross-cc: i686-linux-gnu-gcc
+          - os: ubuntu-latest
+            target: arm-unknown-linux-gnueabihf
+            use-cross: true
+            cross-cc: arm-linux-gnueabihf-gcc
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            use-cross: true
+            cross-cc: aarch64-linux-gnu-gcc
+
+    runs-on: ${{ matrix.jobs.os }}
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.jobs.target }}
+
+    - name: Install cross
+      if: matrix.jobs.use-cross == true
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cross
+
+    - name: Overwrite build command env variable
+      if: matrix.jobs.use-cross
+      shell: bash
+      run: echo "BUILD_CMD=cross" >> $GITHUB_ENV
+
+    - name: Build
+      shell: bash
+      run: $BUILD_CMD build --release --target ${{ matrix.jobs.target }}
+
+    - name: Binary and archive names
+      id: bin
+      shell: bash
+      run: |
+        EXE_suffix=""
+        if [[ "${{ matrix.jobs.os == windows-* }}"]]; then
+          EXE_suffix=".exe"
+        fi
+
+        BIN_NAME="rednext"
+        BIN_PATH="target/${{matrix.jobs.target}}/release/${BIN_NAME}"
+        
+        ARCHIVE="rednext-${{ matrix.jobs.target }}"
+        echo "BIN_PATH=${BIN_PATH}" >> $GITHUB_OUTPUT
+        echo "ARCHIVE=${ARCHIVE}" >> $GITHUB_OUTPUT
+
+    - name: Build archive dir
+      shell: bash
+      run: |
+        mkdir -p "${ARCHIVE}"
+        cp "${{ steps.bin.output.BIN_PATH }}" "${ARCHIVE}"
+        cp "LICENSE" "README.md" "${ARCHIVE}"
+
+    - name: Build archive (Windows)
+      shell: bash
+      if: startsWith(matrix.jobs.os, 'windows')
+      run: |
+        ARCHIVE_NAME="${ARCHIVE}".zip
+        7z a "${ARCHIVE_NAME}" "${ARCHIVE}"
+        certutil -hashfile "${ARCHIVE_NAME}" SHA256 > "${ARCHIVE_NAME}.sha256"
+        echo "ASSET=${ARCHIVE_NAME}" >> $GITHUB_ENV
+        echo "ASSET_SUM=${ARCHIVE_NAME}.sha256" >> $GITHUB_ENV
+
+    - name: Build archive (Unix)
+      shell: bash
+      if: ${{ !startsWith(matrix.jobs.os, 'windows') }}
+      run: |
+        ARCHIVE_NAME="${ARCHIVE}".tar.gz
+        tar czf "${ARCHIVE_NAME}" "${ARCHIVE_DIR}"
+        shasum -a 256 "${ARCHIVE_NAME}" > "${ARCHIVE_NAME}.sha256"
+        echo "ASSET=${ARCHIVE_NAME}" >> $GITHUB_ENV
+        echo "ASSET_SUM=${ARCHIVE_NAME}.sha256" >> $GITHUB_ENV
