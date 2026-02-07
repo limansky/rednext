@@ -75,7 +75,7 @@ jobs:
 
         BIN_NAME="rednext"
         BIN_PATH="target/${{matrix.jobs.target}}/release/${BIN_NAME}"
-        
+
         ARCHIVE="rednext-${{ matrix.jobs.target }}"
         echo "BIN_PATH=${BIN_PATH}" >> $GITHUB_ENV
         echo "ARCHIVE=${ARCHIVE}" >> $GITHUB_ENV
@@ -84,7 +84,7 @@ jobs:
       shell: bash
       run: |
         mkdir -p "${ARCHIVE}"
-        cp "${{ steps.bin.output.BIN_PATH }}" "${ARCHIVE}"
+        cp "${BIN_PATH}" "${ARCHIVE}"
         cp "LICENSE" "README.md" "${ARCHIVE}"
 
     - name: Build archive (Windows)
