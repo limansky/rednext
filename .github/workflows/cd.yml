@@ -102,7 +102,7 @@ jobs:
       if: ${{ !startsWith(matrix.jobs.os, 'windows') }}
       run: |
         ARCHIVE_NAME="${ARCHIVE}".tar.gz
-        tar czf "${ARCHIVE_NAME}" "${ARCHIVE_DIR}"
+        tar czf "${ARCHIVE_NAME}" "${ARCHIVE}"
         shasum -a 256 "${ARCHIVE_NAME}" > "${ARCHIVE_NAME}.sha256"
         echo "ASSET=${ARCHIVE_NAME}" >> $GITHUB_ENV
         echo "ASSET_SUM=${ARCHIVE_NAME}.sha256" >> $GITHUB_ENV
