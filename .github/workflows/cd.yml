@@ -4,8 +4,6 @@ on:
   push:
     tags:
     - "v[0-9]+.[0-9]+.[0-9]+"
-    branches:
-    - master
 
 jobs:
   release:
@@ -87,22 +85,26 @@ jobs:
         cp "${BIN_PATH}" "${ARCHIVE}"
         cp "LICENSE" "README.md" "${ARCHIVE}"
 
-    - name: Build archive (Windows)
+    - name: Build archive
+      id: archive
       shell: bash
-      if: startsWith(matrix.jobs.os, 'windows')
       run: |
-        ARCHIVE_NAME="${ARCHIVE}".zip
-        7z a "${ARCHIVE_NAME}" "${ARCHIVE}"
-        certutil -hashfile "${ARCHIVE_NAME}" SHA256 > "${ARCHIVE_NAME}.sha256"
-        echo "ASSET=${ARCHIVE_NAME}" >> $GITHUB_ENV
-        echo "ASSET_SUM=${ARCHIVE_NAME}.sha256" >> $GITHUB_ENV
+        if [[ ${{ matrix.jobs.os }} == windows-* ]]; then
+          ARCHIVE_NAME="${ARCHIVE}".zip
+          7z a "${ARCHIVE_NAME}" "${ARCHIVE}"
+          certutil -hashfile "${ARCHIVE_NAME}" SHA256 > "${ARCHIVE_NAME}.sha256"
+        else 
+          ARCHIVE_NAME="${ARCHIVE}".tar.gz
+          tar czf "${ARCHIVE_NAME}" "${ARCHIVE}"
+          shasum -a 256 "${ARCHIVE_NAME}" > "${ARCHIVE_NAME}.sha256"
+        fi
+        echo "ASSET=${ARCHIVE_NAME}" >> $GITHUB_OUTPUT
+        echo "ASSET_SUM=${ARCHIVE_NAME}.sha256" >> $GITHUB_OUTPUT
 
-    - name: Build archive (Unix)
-      shell: bash
-      if: ${{ !startsWith(matrix.jobs.os, 'windows') }}
-      run: |
-        ARCHIVE_NAME="${ARCHIVE}".tar.gz
-        tar czf "${ARCHIVE_NAME}" "${ARCHIVE}"
-        shasum -a 256 "${ARCHIVE_NAME}" > "${ARCHIVE_NAME}.sha256"
-        echo "ASSET=${ARCHIVE_NAME}" >> $GITHUB_ENV
-        echo "ASSET_SUM=${ARCHIVE_NAME}.sha256" >> $GITHUB_ENV
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        draft: true
+        files: |
+          ${{ steps.archive.outputs.ASSET }}
+          ${{ steps.archive.outputs.ASSET_SUM }}
