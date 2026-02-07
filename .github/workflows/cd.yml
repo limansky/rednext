@@ -77,8 +77,8 @@ jobs:
         BIN_PATH="target/${{matrix.jobs.target}}/release/${BIN_NAME}"
         
         ARCHIVE="rednext-${{ matrix.jobs.target }}"
-        echo "BIN_PATH=${BIN_PATH}" >> $GITHUB_OUTPUT
-        echo "ARCHIVE=${ARCHIVE}" >> $GITHUB_OUTPUT
+        echo "BIN_PATH=${BIN_PATH}" >> $GITHUB_ENV
+        echo "ARCHIVE=${ARCHIVE}" >> $GITHUB_ENV
 
     - name: Build archive dir
       shell: bash
