@@ -67,7 +67,7 @@ jobs:
       shell: bash
       run: |
         EXE_suffix=""
-        if [[ "${{ matrix.jobs.os == windows-* }}"]]; then
+        if [[ ${{ matrix.jobs.os }} == windows-* ]]; then
           EXE_suffix=".exe"
         fi
 
