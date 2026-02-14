@@ -3,6 +3,7 @@ use std::fmt::{Display, Formatter};
 use anyhow::Result;
 use chrono::NaiveDateTime;
 use strum::{Display, EnumString};
+use serde::{Deserialize, Serialize};
 
 pub trait DB {
     fn list_files(&self) -> Result<Vec<String>>;
@@ -25,12 +26,12 @@ pub trait DBFile {
     fn find(&self, item_name: &str) -> Result<Vec<DbItem>>;
 }
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct DbSchema {
     pub fields: Vec<DbFieldDesc>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct DbFieldDesc {
     pub name: String,
     pub field_type: DbFieldType,
@@ -45,7 +46,7 @@ impl DbFieldDesc {
     }
 }
 
-#[derive(Clone, EnumString, Display, PartialEq, Eq)]
+#[derive(Clone, EnumString, Deserialize, Serialize, Display, PartialEq, Eq)]
 pub enum DbFieldType {
     Text,
     Number,
@@ -53,12 +54,13 @@ pub enum DbFieldType {
     DateTime,
 }
 
+#[derive(Deserialize, Serialize)]
 pub struct DbField {
     pub name: String,
     pub value: DbValue,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub enum DbValue {
     Text(String),
     Number(i32),
@@ -66,6 +68,7 @@ pub enum DbValue {
     DateTime(NaiveDateTime),
 }
 
+#[derive(Deserialize)]
 pub struct DbItem {
     pub id: u32,
     pub fields: Vec<DbField>,
