@@ -16,12 +16,13 @@ use dirs::config_dir;
 
 use crate::{
     db::{DB, DBFile, DbField, DbFieldDesc, DbFieldType, DbItem, DbSchema, DbValue},
+    http_client::HttpDB,
     sqlite::SqliteDB,
 };
 
 mod db;
-mod sqlite;
 mod http_client;
+mod sqlite;
 
 #[derive(Subcommand, Debug)]
 enum Action {
@@ -120,6 +121,9 @@ impl std::fmt::Display for ListWhat {
 #[derive(Parser, Debug)]
 #[command(about = "Simple random tasks manager")]
 struct Params {
+    /// Connect to remote http server instead of local database (e.g. http://localhost:8080)
+    #[arg(long)]
+    http: Option<String>,
     #[command(subcommand)]
     action: Action,
 }
@@ -145,11 +149,15 @@ fn delimiter_parser(s: &str) -> Result<u8, String> {
 
 fn main() {
     let params = Params::parse();
-    let mut db_path = config_dir().unwrap();
-    db_path.push("rednext");
-    let db = SqliteDB::new(&db_path);
+    let db: Box<dyn DB> = if let Some(url) = params.http {
+        Box::new(HttpDB::new(url))
+    } else {
+        let mut db_path = config_dir().unwrap();
+        db_path.push("rednext");
+        Box::new(SqliteDB::new(&db_path))
+    };
     match params.action {
-        Action::List => list(&db),
+        Action::List => list(db.as_ref()),
         Action::Items(ip) => {
             let file = db.open(&ip.name).unwrap();
             match ip.action {
@@ -171,12 +179,12 @@ fn main() {
             from_file,
             delimiter,
             no_header,
-        } => new_file(&db, &name, from_file, delimiter, no_header).unwrap(),
-        Action::Delete { name } => delete(&db, &name),
+        } => new_file(db.as_ref(), &name, from_file, delimiter, no_header).unwrap(),
+        Action::Delete { name } => delete(db.as_ref(), &name),
     }
 }
 
-fn list(db: &impl DB) {
+fn list(db: &dyn DB) {
     let files = db.list_files().unwrap();
     for (i, name) in (1..).zip(files.into_iter()) {
         println!("{}. {}", i, name);
@@ -397,7 +405,7 @@ fn enter_schema() -> DbSchema {
 }
 
 fn new_file(
-    db: &impl DB,
+    db: &dyn DB,
     name: &str,
     source: Option<PathBuf>,
     delimiter: Option<u8>,
@@ -460,7 +468,7 @@ fn import_csv(
     Ok(())
 }
 
-fn delete(db: &impl DB, name: &str) {
+fn delete(db: &dyn DB, name: &str) {
     let confirmation = Confirm::new()
         .with_prompt(format!("Are you sure you want to delete file {name}?"))
         .interact()
