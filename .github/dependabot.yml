@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # Maintain dependencies for actions
+  - package-ecosystem: "github-actions"
+    directory: ".github"
+    schedule:
+      interval: "weekly"
+
+  # Maintain dependencies for Rust
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
