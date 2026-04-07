@@ -1,29 +1,32 @@
 use std::fmt::{Display, Formatter};
 
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::NaiveDateTime;
 use strum::{Display, EnumString};
 use serde::{Deserialize, Serialize};
 
+#[async_trait]
 pub trait DB {
-    fn list_files(&self) -> Result<Vec<String>>;
-    fn open(&self, name: &str) -> Result<Box<dyn DBFile>>;
-    fn delete(&self, name: &str) -> Result<()>;
-    fn create(&self, name: &str, schema: DbSchema) -> Result<Box<dyn DBFile>>;
+    async fn list_files(&self) -> Result<Vec<String>>;
+    async fn open(&self, name: &str) -> Result<Box<dyn DBFile>>;
+    async fn delete(&self, name: &str) -> Result<()>;
+    async fn create(&self, name: &str, schema: DbSchema) -> Result<Box<dyn DBFile>>;
 }
 
+#[async_trait]
 pub trait DBFile {
     fn schema(&self) -> DbSchema;
-    fn list_items(&self) -> Result<Vec<DbItem>>;
-    fn list_done(&self) -> Result<Vec<DbItem>>;
-    fn list_undone(&self) -> Result<Vec<DbItem>>;
-    fn insert(&self, fields: &[DbField]) -> Result<()>;
-    fn delete(&self, id: u32) -> Result<()>;
-    fn get(&self, id: u32) -> Result<Option<DbItem>>;
-    fn get_random(&self) -> Result<Option<DbItem>>;
-    fn done(&self, id: u32, time: NaiveDateTime) -> Result<()>;
-    fn undone(&self, id: u32) -> Result<()>;
-    fn find(&self, item_name: &str) -> Result<Vec<DbItem>>;
+    async fn list_items(&self) -> Result<Vec<DbItem>>;
+    async fn list_done(&self) -> Result<Vec<DbItem>>;
+    async fn list_undone(&self) -> Result<Vec<DbItem>>;
+    async fn insert(&mut self, fields: &[DbField]) -> Result<()>;
+    async fn delete(&mut self, id: u32) -> Result<()>;
+    async fn get(&mut self, id: u32) -> Result<Option<DbItem>>;
+    async fn get_random(&mut self) -> Result<Option<DbItem>>;
+    async fn done(&mut self, id: u32, time: NaiveDateTime) -> Result<()>;
+    async fn undone(&mut self, id: u32) -> Result<()>;
+    async fn find(&self, item_name: &str) -> Result<Vec<DbItem>>;
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -46,7 +49,7 @@ impl DbFieldDesc {
     }
 }
 
-#[derive(Clone, EnumString, Deserialize, Serialize, Display, PartialEq, Eq)]
+#[derive(Clone, EnumString, Deserialize, Serialize, Display, PartialEq, Eq, sqlx::Type)]
 pub enum DbFieldType {
     Text,
     Number,

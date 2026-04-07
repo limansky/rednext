@@ -1,5 +1,6 @@
 use anyhow::Result;
-use reqwest::{StatusCode, blocking::Client};
+use async_trait::async_trait;
+use reqwest::{StatusCode, Client};
 
 use crate::db::{DB, DBFile, DbField, DbItem, DbSchema};
 
@@ -19,19 +20,20 @@ impl HttpDB {
     }
 }
 
+#[async_trait]
 impl DB for HttpDB {
-    fn list_files(&self) -> Result<Vec<String>> {
+    async fn list_files(&self) -> Result<Vec<String>> {
         let mut url = self.url.clone();
         url.push_str("/list");
-        let res: Vec<String> = reqwest::blocking::get(url)?.json()?;
+        let res: Vec<String> = reqwest::get(url).await?.json().await?;
         Ok(res)
     }
 
-    fn open(&self, name: &str) -> Result<Box<dyn DBFile>> {
+    async fn open(&self, name: &str) -> Result<Box<dyn DBFile>> {
         let mut url = self.url.clone();
         url.push_str("/open/");
         url.push_str(name);
-        let schema = reqwest::blocking::get(url)?.json()?;
+        let schema = reqwest::get(url).await?.json().await?;
         let url = format!("{}/{}", self.url, name);
         Ok(Box::new(HttpDBFile {
             url,
@@ -40,12 +42,12 @@ impl DB for HttpDB {
         }))
     }
 
-    fn create(&self, name: &str, schema: DbSchema) -> Result<Box<dyn DBFile>> {
+    async fn create(&self, name: &str, schema: DbSchema) -> Result<Box<dyn DBFile>> {
         let mut url = self.url.clone();
         url.push_str("/create/");
         url.push_str(name);
         let client = Client::new();
-        client.put(url).json(&schema).send()?;
+        client.put(url).json(&schema).send().await?;
         let url = format!("{}/{}", self.url, name);
         Ok(Box::new(HttpDBFile {
             url,
@@ -54,21 +56,21 @@ impl DB for HttpDB {
         }))
     }
 
-    fn delete(&self, name: &str) -> Result<()> {
+    async fn delete(&self, name: &str) -> Result<()> {
         let client = Client::new();
         let mut url = self.url.clone();
         url.push_str("/delete/");
         url.push_str(name);
-        client.delete(url).send()?;
+        client.delete(url).send().await?;
         Ok(())
     }
 }
 
 impl HttpDBFile {
-    fn get_item(&self, url: &str) -> Result<Option<DbItem>> {
-        let res = self.client.get(url).send()?;
+    async fn get_item(&self, url: &str) -> Result<Option<DbItem>> {
+        let res = self.client.get(url).send().await?;
         if res.status().is_success() {
-            Ok(Some(res.json()?))
+            Ok(Some(res.json().await?))
         } else if res.status() == StatusCode::NOT_FOUND {
             Ok(None)
         } else {
@@ -77,83 +79,84 @@ impl HttpDBFile {
     }
 }
 
+#[async_trait]
 impl DBFile for HttpDBFile {
     fn schema(&self) -> DbSchema {
         self.schema.clone()
     }
 
-    fn list_items(&self) -> Result<Vec<DbItem>> {
+    async fn list_items(&self) -> Result<Vec<DbItem>> {
         let res: Vec<DbItem> = self
             .client
             .get(format!("{}/items", self.url))
-            .send()?
-            .json()?;
+            .send().await?
+            .json().await?;
         Ok(res)
     }
 
-    fn list_done(&self) -> Result<Vec<DbItem>> {
+    async fn list_done(&self) -> Result<Vec<DbItem>> {
         let res: Vec<DbItem> = self
             .client
             .get(format!("{}/items/done", self.url))
-            .send()?
-            .json()?;
+            .send().await?
+            .json().await?;
         Ok(res)
     }
 
-    fn list_undone(&self) -> Result<Vec<DbItem>> {
+    async fn list_undone(&self) -> Result<Vec<DbItem>> {
         let res: Vec<DbItem> = self
             .client
             .get(format!("{}/items/undone", self.url))
-            .send()?
-            .json()?;
+            .send().await?
+            .json().await?;
         Ok(res)
     }
 
-    fn insert(&self, fields: &[DbField]) -> Result<()> {
+    async fn insert(&mut self, fields: &[DbField]) -> Result<()> {
         self.client
             .post(format!("{}/items", self.url))
             .json(fields)
-            .send()?;
+            .send().await?;
         Ok(())
     }
 
-    fn delete(&self, id: u32) -> Result<()> {
+    async fn delete(&mut self, id: u32) -> Result<()> {
         self.client
             .delete(format!("{}/items/{}", self.url, id))
-            .send()?;
+            .send().await?;
         Ok(())
     }
 
-    fn get(&self, id: u32) -> Result<Option<DbItem>> {
-        self.get_item(&format!("{}/items/{}", self.url, id))
+    async fn get(&mut self, id: u32) -> Result<Option<DbItem>> {
+        self.get_item(&format!("{}/items/{}", self.url, id)).await
     }
 
-    fn get_random(&self) -> Result<Option<DbItem>> {
-        self.get_item(&format!("{}/items/random", self.url))
+    async fn get_random(&mut self) -> Result<Option<DbItem>> {
+        self.get_item(&format!("{}/items/random", self.url)).await
     }
 
-    fn done(&self, id: u32, time: chrono::NaiveDateTime) -> Result<()> {
+    async fn done(&mut self, id: u32, time: chrono::NaiveDateTime) -> Result<()> {
         self.client
             .post(format!("{}/items/{}/done", self.url, id))
             .json(&time)
-            .send()?;
+            .send().await?;
         Ok(())
     }
 
-    fn undone(&self, id: u32) -> Result<()> {
+    async fn undone(&mut self, id: u32) -> Result<()> {
         self.client
             .post(format!("{}/items/{}/undone", self.url, id))
-            .send()?;
+            .send().await?;
         Ok(())
     }
 
-    fn find(&self, item_name: &str) -> Result<Vec<DbItem>> {
+    async fn find(&self, item_name: &str) -> Result<Vec<DbItem>> {
         let res: Vec<DbItem> = self
             .client
             .get(format!("{}/items/search", self.url))
             .query(&[("text", item_name)])
-            .send()?
-            .json()?;
+            .send().await?
+            .json().await?;
         Ok(res)
     }
 }
