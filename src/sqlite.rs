@@ -86,15 +86,14 @@ impl SqliteDB {
             })
             .collect::<Vec<_>>()
             .join(", ");
-        sqlx::query(&format!(
+        let sql = format!(
             "CREATE TABLE items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             {field_defs},
             done_at TIMESTAMP
           )"
-        ))
-        .execute(conn)
-        .await?;
+        );
+        sqlx::query(sqlx::AssertSqlSafe(sql)).execute(conn).await?;
 
         Ok(())
         // .context("Cannot create items table")?
@@ -228,7 +227,7 @@ impl SqliteFile {
             .map(|c| format!("{base_query} WHERE {c}"))
             .unwrap_or(base_query);
         q.push_str(&format!(" ORDER BY {ord}"));
-        let mut query = sqlx::query(&q);
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(q));
         for p in params {
             query = query.bind(*p);
         }
@@ -271,7 +270,7 @@ impl DBFile for SqliteFile {
             .join(", ");
 
         let sql = format!("INSERT INTO items ({field_names}) VALUES({placeholders})");
-        let mut query = sqlx::query(&sql);
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
 
         for f in fields {
             query = match &f.value {
@@ -326,20 +325,21 @@ impl DBFile for SqliteFile {
 
     async fn get_random(&mut self) -> Result<Option<DbItem>> {
         let base_query = self.base_select();
-        let item = sqlx::query(&format!(
+        let sql = format!(
             "{base_query}
                      WHERE done_at IS NULL
                      ORDER BY random()
                      LIMIT 1"
-        ))
-        .fetch_optional(&self.pool)
-        .await?;
+        );
+        let item = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .fetch_optional(&self.pool)
+            .await?;
         Ok(item.map(|row| self.to_db_item(&row)).transpose()?)
     }
 
     async fn get(&mut self, id: u32) -> Result<Option<DbItem>> {
         let sql = format!("{} WHERE id=?1", self.base_select());
-        sqlx::query(&sql)
+        sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(id)
             .fetch_optional(&self.pool)
             .await?
@@ -475,9 +475,15 @@ mod tests {
         assert_eq!(item.fields[3].value, DbValue::Number(42));
 
         assert_eq!(file.find("task").await.unwrap().len(), 1);
-        file.done(1, NaiveDate::from_ymd_opt(2024, 7, 2).unwrap().and_hms_opt(0, 0, 0).unwrap())
-            .await
-            .unwrap();
+        file.done(
+            1,
+            NaiveDate::from_ymd_opt(2024, 7, 2)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+        )
+        .await
+        .unwrap();
         assert_eq!(file.list_done().await.unwrap().len(), 1);
         assert!(file.list_undone().await.unwrap().is_empty());
         assert!(file.get_random().await.unwrap().is_none());
