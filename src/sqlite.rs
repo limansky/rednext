@@ -1,5 +1,4 @@
 use std::{
-    error::Error,
     ffi::OsStr,
     fs,
     path::{Path, PathBuf},
@@ -8,7 +7,10 @@ use std::{
 
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
-use sqlx::{Connection, Database, Decode, Executor, IntoArguments, Row, Sqlite, SqliteConnection};
+use sqlx::{
+    Connection, Row, SqliteConnection, SqlitePool,
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow},
+};
 
 use crate::db::{DB, DBFile, DbField, DbFieldDesc, DbFieldType, DbItem, DbSchema, DbValue};
 
@@ -80,7 +82,7 @@ impl SqliteDB {
                     DbFieldType::Boolean => "BOOLEAN",
                     DbFieldType::DateTime => "TIMESTAMP",
                 };
-                format!("\"{}\" {}", f.name.as_str(), sql_type)
+                format!("\"{}\" {}", f.name.to_lowercase(), sql_type)
             })
             .collect::<Vec<_>>()
             .join(", ");
@@ -100,8 +102,15 @@ impl SqliteDB {
 }
 
 struct SqliteFile {
-    connection: SqliteConnection,
+    pool: SqlitePool,
     schema: DbSchema,
+}
+
+async fn connect(path: &Path, create: bool) -> sqlx::Result<SqlitePool> {
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(create);
+    SqlitePoolOptions::new().connect_with(options).await
 }
 
 #[async_trait]
@@ -144,37 +153,32 @@ impl DB for SqliteDB {
             return Err(anyhow!("Database file {:?} already exists", file_path));
         }
 
-        let mut conn =
-            SqliteConnection::connect(&file_path.into_os_string().into_string().unwrap())
-                .await
-                .context("Cannot create DB file")?;
+        let pool = connect(&file_path, true)
+            .await
+            .context("Cannot create DB file")?;
+        let mut conn = pool.acquire().await?;
         Self::write_schema(&mut conn, &schema)
             .await
             .context("Cannot write schema")?;
         Self::create_items_table(&mut conn, &schema)
             .await
             .context("Cannot create items table")?;
-        Ok(Box::new(SqliteFile {
-            connection: conn,
-            schema,
-        }))
+        drop(conn);
+        Ok(Box::new(SqliteFile { pool, schema }))
     }
 
     async fn open(&self, name: &str) -> Result<Box<dyn DBFile>> {
         let mut path = self.path.clone();
         path.push(name);
         path.set_extension("db");
-        let mut conn = SqliteConnection::connect(&path.into_os_string().into_string().unwrap())
-            .await
-            .context("Cannot open DB")?;
+        let pool = connect(&path, false).await.context("Cannot open DB")?;
+        let mut conn = pool.acquire().await?;
         let schema = Self::read_schema(&mut conn)
             .await
             .context("Cannot read schema")?;
+        drop(conn);
 
-        Ok(Box::new(SqliteFile {
-            connection: conn,
-            schema,
-        }))
+        Ok(Box::new(SqliteFile { pool, schema }))
     }
 
     async fn delete(&self, name: &str) -> Result<()> {
@@ -186,53 +190,55 @@ impl DB for SqliteDB {
 }
 
 impl SqliteFile {
-    // fn to_db_item<R: Row>(&self, row: &R) -> sqlx::Result<DbItem> {
-    //     let fields: sqlx::Result<Vec<DbField>> = self
-    //         .schema
-    //         .fields
-    //         .iter()
-    //         .map(|f| {
-    //             let value = match f.field_type {
-    //                 DbFieldType::Text => DbValue::Text(row.get(f.name.into())?),
-    //                 DbFieldType::Number => DbValue::Number(row.get(f.name.into())?),
-    //                 DbFieldType::Boolean => DbValue::Boolean(row.get(f.name.into())?),
-    //                 DbFieldType::DateTime => DbValue::DateTime(row.get(f.name.into())?),
-    //             };
-    //             Ok(DbField {
-    //                 name: f.name.clone(),
-    //                 value,
-    //             })
-    //         })
-    //         .collect();
-    //     Ok(DbItem {
-    //         id: row.try_get("id".into())?,
-    //         fields: fields?,
-    //         completed_at: row.try_get("done_at".into())?,
-    //     })
-    // }
+    fn to_db_item(&self, row: &SqliteRow) -> sqlx::Result<DbItem> {
+        let fields = self
+            .schema
+            .fields
+            .iter()
+            .map(|f| {
+                let name = f.name.to_lowercase();
+                let value = match f.field_type {
+                    DbFieldType::Text => DbValue::Text(row.try_get(&*name)?),
+                    DbFieldType::Number => DbValue::Number(row.try_get(&*name)?),
+                    DbFieldType::Boolean => DbValue::Boolean(row.try_get(&*name)?),
+                    DbFieldType::DateTime => DbValue::DateTime(row.try_get(&*name)?),
+                };
+                Ok(DbField {
+                    name: f.name.clone(),
+                    value,
+                })
+            })
+            .collect::<sqlx::Result<Vec<_>>>()?;
+        Ok(DbItem {
+            id: row.try_get("id")?,
+            fields,
+            completed_at: row.try_get("done_at")?,
+        })
+    }
 
-    async fn select_items<'q, P>(
+    async fn select_items(
         &self,
         filter: Option<&str>,
-        params: P,
+        params: &[&str],
         order_by: Option<&str>,
-    ) -> Result<Vec<DbItem>>
-    where
-        P: IntoArguments<'q, Sqlite>,
-    {
+    ) -> Result<Vec<DbItem>> {
         let ord = order_by.unwrap_or("id");
         let base_query = self.base_select();
         let mut q = filter
             .map(|c| format!("{base_query} WHERE {c}"))
             .unwrap_or(base_query);
         q.push_str(&format!(" ORDER BY {ord}"));
-        sqlx::query_as_with(&q, params)
-            .fetch_all(&mut self.connection)
-            .await
+        let mut query = sqlx::query(&q);
+        for p in params {
+            query = query.bind(*p);
+        }
+        query
+            .fetch_all(&self.pool)
+            .await?
+            .iter()
+            .map(|row| self.to_db_item(row))
+            .collect::<sqlx::Result<Vec<_>>>()
             .context("Item query error")
-        // let iter = stmt.query_map(|row| self.to_db_item(row))?;
-        // iter.collect::<sqlx::Result<Vec<_>>>()
-        // .context("Item query error")
     }
 
     fn base_select(&self) -> String {
@@ -264,20 +270,19 @@ impl DBFile for SqliteFile {
             .collect::<Vec<_>>()
             .join(", ");
 
-        let mut query = sqlx::query(
-            format!("INSERT INTO items ({field_names}) VALUES({placeholders})").as_str(),
-        );
+        let sql = format!("INSERT INTO items ({field_names}) VALUES({placeholders})");
+        let mut query = sqlx::query(&sql);
 
         for f in fields {
-            match f.value {
-                DbValue::Text(s) => query.bind(s.clone()),
-                DbValue::Number(n) => query.bind(n),
-                DbValue::Boolean(b) => query.bind(b),
-                DbValue::DateTime(dt) => query.bind(dt.format("%Y-%m-%dT%H:%M:%S").to_string()),
-            }
+            query = match &f.value {
+                DbValue::Text(s) => query.bind(s.as_str()),
+                DbValue::Number(n) => query.bind(*n),
+                DbValue::Boolean(b) => query.bind(*b),
+                DbValue::DateTime(dt) => query.bind(*dt),
+            };
         }
         query
-            .execute(&mut self.connection)
+            .execute(&self.pool)
             .await
             .context("Cannot insert item")?;
         Ok(())
@@ -286,35 +291,37 @@ impl DBFile for SqliteFile {
     async fn delete(&mut self, id: u32) -> Result<()> {
         sqlx::query("DELETE FROM items WHERE id=?1")
             .bind(id)
-            .execute(&mut self.connection)
+            .execute(&self.pool)
             .await
             .context("Cannot delete item")?;
         Ok(())
     }
 
     async fn list_items(&self) -> Result<Vec<DbItem>> {
-        self.select_items(None, [], None)
+        self.select_items(None, &[], None).await
     }
 
     async fn list_done(&self) -> Result<Vec<DbItem>> {
-        self.select_items(Some("done_at IS NOT NULL"), [], Some("done_at"))
+        self.select_items(Some("done_at IS NOT NULL"), &[], Some("done_at"))
+            .await
     }
 
     async fn list_undone(&self) -> Result<Vec<DbItem>> {
-        self.select_items(Some("done_at IS NULL"), [], None)
+        self.select_items(Some("done_at IS NULL"), &[], None).await
     }
 
     async fn find(&self, item_name: &str) -> Result<Vec<DbItem>> {
         let pattern = format!("%{item_name}%");
         let fields = self.schema.fields.iter().flat_map(|f| {
             if f.field_type == DbFieldType::Text {
-                Some(format!("{} LIKE ?1", f.name))
+                Some(format!("\"{}\" LIKE ?1", f.name))
             } else {
                 None
             }
         });
         let filter = fields.collect::<Vec<_>>().join(" OR ");
-        self.select_items(Some(filter.as_str()), vec![pattern], None)
+        self.select_items(Some(filter.as_str()), &[&pattern], None)
+            .await
     }
 
     async fn get_random(&mut self) -> Result<Option<DbItem>> {
@@ -325,18 +332,16 @@ impl DBFile for SqliteFile {
                      ORDER BY random()
                      LIMIT 1"
         ))
-        .fetch_optional(&mut self.connection)
+        .fetch_optional(&self.pool)
         .await?;
-        // .map(
-        // |row| self.to_db_item(row))
         Ok(item.map(|row| self.to_db_item(&row)).transpose()?)
     }
 
     async fn get(&mut self, id: u32) -> Result<Option<DbItem>> {
-        let base_query = self.base_select();
-        sqlx::query(format!("{base_query} WHERE id=?1").as_str())
+        let sql = format!("{} WHERE id=?1", self.base_select());
+        sqlx::query(&sql)
             .bind(id)
-            .fetch_optional(&mut self.connection)
+            .fetch_optional(&self.pool)
             .await?
             .map(|row| self.to_db_item(&row))
             .transpose()
@@ -347,7 +352,7 @@ impl DBFile for SqliteFile {
         let count = sqlx::query("UPDATE items SET done_at=?1 WHERE id =?2")
             .bind(time)
             .bind(id)
-            .execute(&mut self.connection)
+            .execute(&self.pool)
             .await?
             .rows_affected();
 
@@ -361,7 +366,7 @@ impl DBFile for SqliteFile {
     async fn undone(&mut self, id: u32) -> Result<()> {
         let count = sqlx::query("UPDATE items SET done_at=NULL WHERE id = ?1")
             .bind(id)
-            .execute(&mut self.connection)
+            .execute(&self.pool)
             .await?
             .rows_affected();
 
@@ -373,40 +378,26 @@ impl DBFile for SqliteFile {
     }
 }
 
-// impl<'r, DB: Database> Decode<'r, DB> for DbFieldType
-// where
-//     &'r str: Decode<'r, DB>,
-// {
-//     fn decode(
-//         value: <DB as Database>::ValueRef<'r>,
-//     ) -> Result<DbFieldType, Box<dyn Error + 'static + Send + Sync>> {
-//         let value = <&str as Decode<DB>>::decode(value)?;
-//         Ok(value.parse()?)
-//     }
-// }
-
-// impl FromSql for DbFieldType {
-//     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
-//         value
-//             .as_str()?
-//             .parse()
-//             .map_err(|e| FromSqlError::Other(Box::new(e)))
-//     }
-// }
-
 #[cfg(test)]
 mod tests {
     use chrono::NaiveDate;
-    use sqlx::{Connection, SqliteConnection};
+    use sqlx::sqlite::SqlitePoolOptions;
 
     use crate::{
-        db::{DBFile, DbField, DbFieldDesc, DbFieldType, DbSchema, DbValue},
-        sqlite::SqliteFile,
+        db::{DB, DBFile, DbField, DbFieldDesc, DbFieldType, DbSchema, DbValue},
+        sqlite::{SqliteDB, SqliteFile},
     };
 
-    fn create_file() -> SqliteFile {
-        let conn = SqliteConnection::open_in_memory().unwrap();
-        conn.execute(
+    async fn create_file() -> SqliteFile {
+        // A single long-lived connection, otherwise each pooled connection gets its own in-memory DB
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .idle_timeout(None)
+            .max_lifetime(None)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query(
             "CREATE TABLE items(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             txt TEXT,
@@ -416,8 +407,9 @@ mod tests {
             done_at TIMESTAMP,
             comment TEXT
           )",
-            [],
         )
+        .execute(&pool)
+        .await
         .unwrap();
         let schema = DbSchema {
             fields: vec![
@@ -427,16 +419,13 @@ mod tests {
                 DbFieldDesc::new("n", DbFieldType::Number),
             ],
         };
-        SqliteFile {
-            connection: conn,
-            schema,
-        }
+        SqliteFile { pool, schema }
     }
 
-    #[test]
-    fn test_insert() {
-        let file = create_file();
-        assert!(file.list_items().unwrap().is_empty());
+    #[tokio::test]
+    async fn test_insert() {
+        let mut file = create_file().await;
+        assert!(file.list_items().await.unwrap().is_empty());
         file.insert(&[
             DbField {
                 name: "txt".to_string(),
@@ -460,9 +449,10 @@ mod tests {
                 value: DbValue::Number(42),
             },
         ])
+        .await
         .unwrap();
 
-        let items = file.list_items().unwrap();
+        let items = file.list_items().await.unwrap();
         assert_eq!(items.len(), 1);
         let item = &items[0];
         assert_eq!(item.id, 1);
@@ -483,5 +473,34 @@ mod tests {
         assert_eq!(item.fields[2].value, DbValue::Boolean(true));
         assert_eq!(item.fields[3].name, "n");
         assert_eq!(item.fields[3].value, DbValue::Number(42));
+
+        assert_eq!(file.find("task").await.unwrap().len(), 1);
+        file.done(1, NaiveDate::from_ymd_opt(2024, 7, 2).unwrap().and_hms_opt(0, 0, 0).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(file.list_done().await.unwrap().len(), 1);
+        assert!(file.list_undone().await.unwrap().is_empty());
+        assert!(file.get_random().await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_create_and_open() {
+        let dir = std::env::temp_dir().join(format!("rednext-test-{}", std::process::id()));
+        let db = SqliteDB::new(&dir);
+        let schema = DbSchema {
+            fields: vec![
+                DbFieldDesc::new("txt", DbFieldType::Text),
+                DbFieldDesc::new("n", DbFieldType::Number),
+            ],
+        };
+        db.create("test", schema).await.unwrap();
+        assert_eq!(db.list_files().await.unwrap(), vec!["test".to_string()]);
+        let file = db.open("test").await.unwrap();
+        let fields = file.schema().fields;
+        assert_eq!(fields.len(), 2);
+        assert!(fields[0].name == "txt" && fields[0].field_type == DbFieldType::Text);
+        assert!(fields[1].name == "n" && fields[1].field_type == DbFieldType::Number);
+        drop(file);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

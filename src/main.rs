@@ -337,7 +337,7 @@ async fn get(file: &mut dyn DBFile, id: u32) {
                 file.undone(id).await.unwrap();
             }
         } else {
-            mark_done(file, item);
+            mark_done(file, item).await;
         }
     } else {
         println!("Item with id {id} doesn't exist");
@@ -356,7 +356,7 @@ async fn get_random(file: &mut dyn DBFile) {
     if let Some(item) = file.get_random().await.unwrap() {
         let fields_str = item_fields_to_string(&item);
         println!("Random item is {}: {}", item.id, fields_str);
-        mark_done(file, item);
+        mark_done(file, item).await;
     } else {
         println!("All items are complete");
     }
