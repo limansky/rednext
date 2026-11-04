@@ -8,7 +8,7 @@ use std::{
 use anyhow::Context;
 use chrono::{Local, NaiveDate, NaiveDateTime};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use comfy_table::Table;
+use comfy_table::{ContentLineStyle, LineStyle, Table, TableStyle};
 use console::Style;
 use csv::{ReaderBuilder, Trim};
 use dialoguer::{Confirm, Input, Select};
@@ -203,10 +203,17 @@ async fn start_server(port: u16) {
 
 async fn list(db: &dyn DB) {
     let files = db.list_files().await.unwrap();
-    for (i, name) in (1..).zip(files.into_iter()) {
+    for (i, name) in (1..).zip(files) {
         println!("{}. {}", i, name);
     }
 }
+
+const TABLE_STYLE: TableStyle = TableStyle::new()
+    .top_border(LineStyle::new('┌', '─', '┬', '┐'))
+    .header_lines(ContentLineStyle::new('│', '│', '│'))
+    .header_separator(LineStyle::new('╞', '═', '╪', '╡'))
+    .content_lines(ContentLineStyle::new('│', '│', '│'))
+    .bottom_border(LineStyle::new('└', '─', '┴', '┘'));
 
 async fn list_items(file: &dyn DBFile, what: ListWhat) {
     let items = match what {
@@ -225,7 +232,7 @@ async fn list_items(file: &dyn DBFile, what: ListWhat) {
         header.push(f.name);
     });
     header.push("Done".to_string());
-    table.load_preset("││──╞═╪╡│    ┬┴┌┐└┘").set_header(header);
+    table.load_style(TABLE_STYLE).set_header(header);
     for i in items {
         let done_str = i
             .completed_at
