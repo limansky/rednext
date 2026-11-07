@@ -3,8 +3,8 @@ use std::fmt::{Display, Formatter};
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
-use strum::{Display, EnumString};
 use serde::{Deserialize, Serialize};
+use strum::{Display, EnumString};
 
 #[async_trait]
 pub trait DB {
@@ -15,7 +15,7 @@ pub trait DB {
 }
 
 #[async_trait]
-pub trait DBFile {
+pub trait DBFile: Send + Sync {
     fn schema(&self) -> DbSchema;
     async fn list_items(&self) -> Result<Vec<DbItem>>;
     async fn list_done(&self) -> Result<Vec<DbItem>>;
@@ -71,7 +71,7 @@ pub enum DbValue {
     DateTime(NaiveDateTime),
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct DbItem {
     pub id: u32,
     pub fields: Vec<DbField>,
@@ -88,3 +88,18 @@ impl Display for DbValue {
         }
     }
 }
+
+#[derive(Debug)]
+pub enum DbError {
+    NotFound(String),
+}
+
+impl Display for DbError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DbError::NotFound(name) => write!(f, "Database {} not found", name),
+        }
+    }
+}
+
+impl std::error::Error for DbError {}

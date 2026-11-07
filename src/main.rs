@@ -2,7 +2,8 @@ use std::{
     error::Error,
     fmt::Display,
     path::{Path, PathBuf},
-    str::FromStr, sync::Arc,
+    str::FromStr,
+    sync::Arc,
 };
 
 use anyhow::Context;
@@ -21,9 +22,9 @@ use crate::{
 };
 
 mod db;
-mod sqlite;
 mod http_client;
 mod http_server;
+mod sqlite;
 
 #[derive(Subcommand, Debug)]
 enum Action {
@@ -168,7 +169,13 @@ async fn main() {
     match params.action {
         Action::List => list(db.as_ref()).await,
         Action::Items(ip) => {
-            let mut file = db.open(&ip.name).await.unwrap();
+            let mut file = match db.open(&ip.name).await {
+                Ok(file) => file,
+                Err(e) => {
+                    eprintln!("{:#}", e);
+                    std::process::exit(1);
+                }
+            };
             match ip.action {
                 ItemsAction::List { what } => list_items(file.as_ref(), what).await,
                 ItemsAction::Add => add_item(file.as_mut()).await,
@@ -177,7 +184,9 @@ async fn main() {
                     file_name,
                     delimiter,
                     no_header,
-                } => import_csv(file.as_mut(), &file_name, no_header, delimiter).await.unwrap(),
+                } => import_csv(file.as_mut(), &file_name, no_header, delimiter)
+                    .await
+                    .unwrap(),
                 ItemsAction::Get { id } => get(file.as_mut(), id).await,
                 ItemsAction::GetRandom => get_random(file.as_mut()).await,
                 ItemsAction::Find { name } => find_by_name(file.as_ref(), &name).await,
@@ -188,7 +197,9 @@ async fn main() {
             from_file,
             delimiter,
             no_header,
-        } => new_file(db.as_ref(), &name, from_file, delimiter, no_header).await.unwrap(),
+        } => new_file(db.as_ref(), &name, from_file, delimiter, no_header)
+            .await
+            .unwrap(),
         Action::Delete { name } => delete(db.as_ref(), &name).await,
         Action::Serve { port } => start_server(port).await,
     }
@@ -198,7 +209,10 @@ async fn start_server(port: u16) {
     let mut db_path = config_dir().unwrap();
     db_path.push("rednext");
     let db = SqliteDB::new(&db_path);
-    http_server::create_server(Arc::new(db), port).await.unwrap();
+    println!("Starting server on port {}", port);
+    http_server::create_server(Arc::new(db), port)
+        .await
+        .unwrap();
 }
 
 async fn list(db: &dyn DB) {
@@ -220,7 +234,8 @@ async fn list_items(file: &dyn DBFile, what: ListWhat) {
         ListWhat::All => file.list_items(),
         ListWhat::Done => file.list_done(),
         ListWhat::Undone => file.list_undone(),
-    }.await
+    }
+    .await
     .unwrap();
 
     let stat_style = Style::new().bold();
@@ -376,7 +391,9 @@ async fn mark_done(file: &mut dyn DBFile, item: DbItem) {
         .interact()
         .unwrap();
     if done {
-        file.done(item.id, Local::now().naive_local()).await.unwrap();
+        file.done(item.id, Local::now().naive_local())
+            .await
+            .unwrap();
     }
 }
 
@@ -437,7 +454,8 @@ async fn new_file(
 ) -> anyhow::Result<()> {
     let schema = enter_schema();
     let mut file = db
-        .create(name, schema).await
+        .create(name, schema)
+        .await
         .context("Failed to create a new file")?;
 
     if let Some(source) = source {

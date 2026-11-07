@@ -1,8 +1,8 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use reqwest::{StatusCode, Client};
+use reqwest::{Client, StatusCode};
 
-use crate::db::{DB, DBFile, DbField, DbItem, DbSchema};
+use crate::db::{DB, DBFile, DbError, DbField, DbItem, DbSchema};
 
 pub struct HttpDB {
     url: String,
@@ -16,7 +16,7 @@ struct HttpDBFile {
 
 impl HttpDB {
     pub fn new(url: String) -> Self {
-        HttpDB { url: url }
+        HttpDB { url }
     }
 }
 
@@ -33,7 +33,11 @@ impl DB for HttpDB {
         let mut url = self.url.clone();
         url.push_str("/open/");
         url.push_str(name);
-        let schema = reqwest::get(url).await?.json().await?;
+        let res = reqwest::get(url).await?;
+        if res.status() == StatusCode::NOT_FOUND {
+            return Err(DbError::NotFound(name.to_string()).into());
+        }
+        let schema = res.error_for_status()?.json().await?;
         let url = format!("{}/{}", self.url, name);
         Ok(Box::new(HttpDBFile {
             url,
@@ -89,8 +93,10 @@ impl DBFile for HttpDBFile {
         let res: Vec<DbItem> = self
             .client
             .get(format!("{}/items", self.url))
-            .send().await?
-            .json().await?;
+            .send()
+            .await?
+            .json()
+            .await?;
         Ok(res)
     }
 
@@ -98,8 +104,10 @@ impl DBFile for HttpDBFile {
         let res: Vec<DbItem> = self
             .client
             .get(format!("{}/items/done", self.url))
-            .send().await?
-            .json().await?;
+            .send()
+            .await?
+            .json()
+            .await?;
         Ok(res)
     }
 
@@ -107,8 +115,10 @@ impl DBFile for HttpDBFile {
         let res: Vec<DbItem> = self
             .client
             .get(format!("{}/items/undone", self.url))
-            .send().await?
-            .json().await?;
+            .send()
+            .await?
+            .json()
+            .await?;
         Ok(res)
     }
 
@@ -116,14 +126,16 @@ impl DBFile for HttpDBFile {
         self.client
             .post(format!("{}/items", self.url))
             .json(fields)
-            .send().await?;
+            .send()
+            .await?;
         Ok(())
     }
 
     async fn delete(&mut self, id: u32) -> Result<()> {
         self.client
             .delete(format!("{}/items/{}", self.url, id))
-            .send().await?;
+            .send()
+            .await?;
         Ok(())
     }
 
@@ -139,14 +151,16 @@ impl DBFile for HttpDBFile {
         self.client
             .post(format!("{}/items/{}/done", self.url, id))
             .json(&time)
-            .send().await?;
+            .send()
+            .await?;
         Ok(())
     }
 
     async fn undone(&mut self, id: u32) -> Result<()> {
         self.client
             .post(format!("{}/items/{}/undone", self.url, id))
-            .send().await?;
+            .send()
+            .await?;
         Ok(())
     }
 
@@ -155,8 +169,10 @@ impl DBFile for HttpDBFile {
             .client
             .get(format!("{}/items/search", self.url))
             .query(&[("text", item_name)])
-            .send().await?
-            .json().await?;
+            .send()
+            .await?
+            .json()
+            .await?;
         Ok(res)
     }
 }

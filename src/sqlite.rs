@@ -12,7 +12,9 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow},
 };
 
-use crate::db::{DB, DBFile, DbField, DbFieldDesc, DbFieldType, DbItem, DbSchema, DbValue};
+use crate::db::{
+    DB, DBFile, DbError, DbField, DbFieldDesc, DbFieldType, DbItem, DbSchema, DbValue,
+};
 
 pub struct SqliteDB {
     path: PathBuf,
@@ -170,6 +172,9 @@ impl DB for SqliteDB {
         let mut path = self.path.clone();
         path.push(name);
         path.set_extension("db");
+        if !path.exists() {
+            return Err(DbError::NotFound(name.to_string()).into());
+        }
         let pool = connect(&path, false).await.context("Cannot open DB")?;
         let mut conn = pool.acquire().await?;
         let schema = Self::read_schema(&mut conn)
