@@ -264,6 +264,16 @@ impl DBFile for SqliteFile {
     }
 
     async fn insert(&mut self, fields: &[DbField]) -> Result<()> {
+        // Field names are interpolated into SQL, so only allow ones from the schema
+        if let Some(f) = fields.iter().find(|f| {
+            !self
+                .schema
+                .fields
+                .iter()
+                .any(|d| d.name.eq_ignore_ascii_case(&f.name))
+        }) {
+            return Err(DbError::UnknownField(f.name.clone()).into());
+        }
         let field_names = fields
             .iter()
             .map(|f| format!("\"{}\"", f.name.as_str()))

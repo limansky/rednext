@@ -5,14 +5,17 @@ use std::{
 
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
 };
 
+use chrono::NaiveDateTime;
+use serde::Deserialize;
+
 use crate::{
-    db::{DB, DbError, DbItem, DbSchema},
+    db::{DB, DbError, DbField, DbItem, DbSchema},
     sqlite::SqliteDB,
 };
 
@@ -24,11 +27,14 @@ pub async fn create_server(db: Arc<SqliteDB>, port: u16) -> Result<(), std::io::
     let app = Router::new()
         .route("/list", get(list_files))
         .route("/open/{name}", get(open_file))
-        .route("/{name}/items", get(list_items))
+        .route("/{name}/items", get(list_items).post(insert_item))
         .route("/{name}/items/done", get(list_done))
         .route("/{name}/items/undone", get(list_undone))
         .route("/{name}/items/random", get(get_random))
-        .route("/{name}/items/{id}", get(get_item))
+        .route("/{name}/items/search", get(search))
+        .route("/{name}/items/{id}", get(get_item).delete(delete_item))
+        .route("/{name}/items/{id}/done", post(done))
+        .route("/{name}/items/{id}/undone", post(undone))
         .with_state(db);
 
     axum::serve(listener, app).await
@@ -49,6 +55,7 @@ impl IntoResponse for RedError {
     fn into_response(self) -> Response {
         let status = match self.0.downcast_ref::<DbError>() {
             Some(DbError::NotFound(_)) => StatusCode::NOT_FOUND,
+            Some(DbError::UnknownField(_)) => StatusCode::BAD_REQUEST,
             None => StatusCode::INTERNAL_SERVER_ERROR,
         };
         (status, self.0.to_string()).into_response()
@@ -115,4 +122,57 @@ async fn get_random(
         Some(item) => Ok(Json(item).into_response()),
         None => Ok(StatusCode::NOT_FOUND.into_response()),
     }
+}
+
+#[derive(Deserialize)]
+struct SearchParams {
+    q: String,
+}
+
+async fn search(
+    State(db): State<Arc<SqliteDB>>,
+    Path(name): Path<String>,
+    Query(params): Query<SearchParams>,
+) -> Result<Json<Vec<DbItem>>, RedError> {
+    let file = db.open(&name).await?;
+    let items = file.find(&params.q).await?;
+    Ok(Json(items))
+}
+
+async fn insert_item(
+    State(db): State<Arc<SqliteDB>>,
+    Path(name): Path<String>,
+    Json(fields): Json<Vec<DbField>>,
+) -> Result<StatusCode, RedError> {
+    let mut file = db.open(&name).await?;
+    file.insert(&fields).await?;
+    Ok(StatusCode::CREATED)
+}
+
+async fn delete_item(
+    State(db): State<Arc<SqliteDB>>,
+    Path((name, id)): Path<(String, u32)>,
+) -> Result<StatusCode, RedError> {
+    let mut file = db.open(&name).await?;
+    file.delete(id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn done(
+    State(db): State<Arc<SqliteDB>>,
+    Path((name, id)): Path<(String, u32)>,
+    Json(time): Json<NaiveDateTime>,
+) -> Result<StatusCode, RedError> {
+    let mut file = db.open(&name).await?;
+    file.done(id, time).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn undone(
+    State(db): State<Arc<SqliteDB>>,
+    Path((name, id)): Path<(String, u32)>,
+) -> Result<StatusCode, RedError> {
+    let mut file = db.open(&name).await?;
+    file.undone(id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }

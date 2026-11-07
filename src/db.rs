@@ -92,12 +92,14 @@ impl Display for DbValue {
 #[derive(Debug)]
 pub enum DbError {
     NotFound(String),
+    UnknownField(String),
 }
 
 impl Display for DbError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             DbError::NotFound(name) => write!(f, "Database {} not found", name),
+            DbError::UnknownField(name) => write!(f, "Unknown field {}", name),
         }
     }
 }

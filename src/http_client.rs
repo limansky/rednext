@@ -127,7 +127,8 @@ impl DBFile for HttpDBFile {
             .post(format!("{}/items", self.url))
             .json(fields)
             .send()
-            .await?;
+            .await?
+            .error_for_status()?;
         Ok(())
     }
 
@@ -135,7 +136,8 @@ impl DBFile for HttpDBFile {
         self.client
             .delete(format!("{}/items/{}", self.url, id))
             .send()
-            .await?;
+            .await?
+            .error_for_status()?;
         Ok(())
     }
 
@@ -152,7 +154,8 @@ impl DBFile for HttpDBFile {
             .post(format!("{}/items/{}/done", self.url, id))
             .json(&time)
             .send()
-            .await?;
+            .await?
+            .error_for_status()?;
         Ok(())
     }
 
@@ -160,7 +163,8 @@ impl DBFile for HttpDBFile {
         self.client
             .post(format!("{}/items/{}/undone", self.url, id))
             .send()
-            .await?;
+            .await?
+            .error_for_status()?;
         Ok(())
     }
 
@@ -168,7 +172,7 @@ impl DBFile for HttpDBFile {
         let res: Vec<DbItem> = self
             .client
             .get(format!("{}/items/search", self.url))
-            .query(&[("text", item_name)])
+            .query(&[("q", item_name)])
             .send()
             .await?
             .json()
