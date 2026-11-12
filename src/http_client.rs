@@ -31,7 +31,7 @@ impl DB for HttpDB {
 
     async fn open(&self, name: &str) -> Result<Box<dyn DBFile>> {
         let mut url = self.url.clone();
-        url.push_str("/open/");
+        url.push_str("/file/");
         url.push_str(name);
         let res = reqwest::get(url).await?;
         if res.status() == StatusCode::NOT_FOUND {
@@ -48,10 +48,14 @@ impl DB for HttpDB {
 
     async fn create(&self, name: &str, schema: DbSchema) -> Result<Box<dyn DBFile>> {
         let mut url = self.url.clone();
-        url.push_str("/create/");
+        url.push_str("/file/");
         url.push_str(name);
         let client = Client::new();
-        client.put(url).json(&schema).send().await?;
+        let res = client.post(url).json(&schema).send().await?;
+        if res.status() == StatusCode::CONFLICT {
+            return Err(DbError::DbAlreadyExists(name.to_string()).into());
+        }
+        res.error_for_status()?;
         let url = format!("{}/{}", self.url, name);
         Ok(Box::new(HttpDBFile {
             url,
@@ -63,9 +67,9 @@ impl DB for HttpDB {
     async fn delete(&self, name: &str) -> Result<()> {
         let client = Client::new();
         let mut url = self.url.clone();
-        url.push_str("/delete/");
+        url.push_str("/file/");
         url.push_str(name);
-        client.delete(url).send().await?;
+        client.delete(url).send().await?.error_for_status()?;
         Ok(())
     }
 }

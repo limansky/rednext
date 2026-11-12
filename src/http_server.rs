@@ -26,7 +26,7 @@ pub async fn create_server(db: Arc<SqliteDB>, port: u16) -> Result<(), std::io::
             .unwrap();
     let app = Router::new()
         .route("/list", get(list_files))
-        .route("/open/{name}", get(open_file))
+        .route("/file/{name}", get(open_file).delete(delete_file).post(create_file))
         .route("/{name}/items", get(list_items).post(insert_item))
         .route("/{name}/items/done", get(list_done))
         .route("/{name}/items/undone", get(list_undone))
@@ -56,6 +56,7 @@ impl IntoResponse for RedError {
         let status = match self.0.downcast_ref::<DbError>() {
             Some(DbError::NotFound(_)) => StatusCode::NOT_FOUND,
             Some(DbError::UnknownField(_)) => StatusCode::BAD_REQUEST,
+            Some(DbError::DbAlreadyExists(_)) => StatusCode::CONFLICT,
             None => StatusCode::INTERNAL_SERVER_ERROR,
         };
         (status, self.0.to_string()).into_response()
@@ -73,6 +74,23 @@ async fn open_file(
 ) -> Result<Json<DbSchema>, RedError> {
     let file = db.open(&name).await?;
     Ok(Json(file.schema()))
+}
+
+async fn delete_file(
+    State(db): State<Arc<SqliteDB>>,
+    Path(name): Path<String>,
+) -> Result<StatusCode, RedError> {
+    db.delete(&name).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn create_file(
+    State(db): State<Arc<SqliteDB>>,
+    Path(name): Path<String>,
+    Json(schema): Json<DbSchema>,
+) -> Result<StatusCode, RedError> {
+    db.create(&name, schema).await?;
+    Ok(StatusCode::CREATED)
 }
 
 async fn list_items(

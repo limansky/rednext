@@ -1,6 +1,6 @@
 use std::{
     ffi::OsStr,
-    fs,
+    fs, io,
     path::{Path, PathBuf},
     result,
 };
@@ -25,6 +25,21 @@ impl SqliteDB {
         SqliteDB {
             path: db_path.to_path_buf(),
         }
+    }
+
+    async fn init_file(file_path: &Path, schema: &DbSchema) -> Result<SqlitePool> {
+        let pool = connect(file_path, false)
+            .await
+            .context("Cannot open DB file")?;
+        let mut conn = pool.acquire().await?;
+        Self::write_schema(&mut conn, schema)
+            .await
+            .context("Cannot write schema")?;
+        Self::create_items_table(&mut conn, schema)
+            .await
+            .context("Cannot create items table")?;
+        drop(conn);
+        Ok(pool)
     }
 
     async fn read_schema(conn: &mut SqliteConnection) -> sqlx::Result<DbSchema> {
@@ -150,22 +165,27 @@ impl DB for SqliteDB {
 
         let file_path = self.path.join(format!("{}.db", name));
 
-        if file_path.exists() {
-            return Err(anyhow!("Database file {:?} already exists", file_path));
+        // Atomically claim the file, so concurrent creates with the same name can't both succeed
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&file_path)
+        {
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                return Err(DbError::DbAlreadyExists(name.to_string()).into());
+            }
+            Err(e) => return Err(e).context("Cannot create DB file"),
         }
 
-        let pool = connect(&file_path, true)
-            .await
-            .context("Cannot create DB file")?;
-        let mut conn = pool.acquire().await?;
-        Self::write_schema(&mut conn, &schema)
-            .await
-            .context("Cannot write schema")?;
-        Self::create_items_table(&mut conn, &schema)
-            .await
-            .context("Cannot create items table")?;
-        drop(conn);
-        Ok(Box::new(SqliteFile { pool, schema }))
+        match Self::init_file(&file_path, &schema).await {
+            Ok(pool) => Ok(Box::new(SqliteFile { pool, schema })),
+            Err(e) => {
+                // Don't leave a half-initialized file behind, it would block retries
+                let _ = fs::remove_file(&file_path);
+                Err(e)
+            }
+        }
     }
 
     async fn open(&self, name: &str) -> Result<Box<dyn DBFile>> {
