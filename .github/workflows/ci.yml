@@ -82,6 +82,12 @@ jobs:
       shell: bash
       run: $BUILD_CMD build --verbose --target ${{ matrix.jobs.target }}
 
+    - name: Allow 32-bit socket syscalls
+      if: matrix.jobs.target == 'i686-unknown-linux-gnu'
+      shell: bash
+      # Docker's default seccomp profile rejects direct i386 socket syscalls (ENOSYS)
+      run: echo "CROSS_CONTAINER_OPTS=--security-opt seccomp=unconfined" >> $GITHUB_ENV
+
     - name: Run tests
       shell: bash
       run: $BUILD_CMD test --verbose --target ${{ matrix.jobs.target }}
