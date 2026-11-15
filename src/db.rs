@@ -94,6 +94,7 @@ pub enum DbError {
     NotFound(String),
     DbAlreadyExists(String),
     UnknownField(String),
+    MissingField(String),
 }
 
 impl Display for DbError {
@@ -102,6 +103,7 @@ impl Display for DbError {
             DbError::NotFound(name) => write!(f, "Database {} not found", name),
             DbError::DbAlreadyExists(name) => write!(f, "Database {} already exists", name),
             DbError::UnknownField(name) => write!(f, "Unknown field {}", name),
+            DbError::MissingField(name) => write!(f, "Missing field {}", name),
         }
     }
 }

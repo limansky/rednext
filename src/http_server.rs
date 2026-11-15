@@ -59,7 +59,7 @@ impl IntoResponse for RedError {
     fn into_response(self) -> Response {
         let status = match self.0.downcast_ref::<DbError>() {
             Some(DbError::NotFound(_)) => StatusCode::NOT_FOUND,
-            Some(DbError::UnknownField(_)) => StatusCode::BAD_REQUEST,
+            Some(DbError::UnknownField(_) | DbError::MissingField(_)) => StatusCode::BAD_REQUEST,
             Some(DbError::DbAlreadyExists(_)) => StatusCode::CONFLICT,
             None => StatusCode::INTERNAL_SERVER_ERROR,
         };
@@ -355,7 +355,12 @@ mod tests {
             name: "nope".to_string(),
             value: DbValue::Number(1),
         }];
-        assert!(file.insert(&unknown).await.is_err());
+        // the server's message reaches the client
+        let err = file.insert(&unknown).await.unwrap_err();
+        assert!(err.to_string().contains("Unknown field nope"), "{err}");
+        let partial = &item("x", 1)[..2];
+        let err = file.insert(partial).await.unwrap_err();
+        assert!(err.to_string().contains("Missing field flag"), "{err}");
         assert!(file.list_items().await.unwrap().is_empty());
 
         assert!(file.done(42, time(1, 0)).await.is_err());
@@ -385,6 +390,10 @@ mod tests {
         );
         assert_eq!(
             status(DbError::UnknownField("x".into()).into()),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status(DbError::MissingField("x".into()).into()),
             StatusCode::BAD_REQUEST
         );
         assert_eq!(

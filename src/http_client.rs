@@ -22,11 +22,21 @@ impl HttpDB {
 }
 
 /// Converts error statuses into errors, mapping the ones with a `DbError` counterpart
-fn check_status(res: Response, name: &str) -> Result<Response> {
+async fn check_status(res: Response, name: &str) -> Result<Response> {
     match res.status() {
         StatusCode::NOT_FOUND => Err(DbError::NotFound(name.to_string()).into()),
         StatusCode::CONFLICT => Err(DbError::DbAlreadyExists(name.to_string()).into()),
-        _ => Ok(res.error_for_status()?),
+        s if s.is_client_error() || s.is_server_error() => Err(server_error(res).await),
+        _ => Ok(res),
+    }
+}
+
+/// Builds an error from the message the server put in the response body
+async fn server_error(res: Response) -> anyhow::Error {
+    let status = res.status();
+    match res.text().await {
+        Ok(msg) if !msg.is_empty() => anyhow::anyhow!("Server error ({status}): {msg}"),
+        _ => anyhow::anyhow!("Server error ({status})"),
     }
 }
 
@@ -43,7 +53,10 @@ impl DB for HttpDB {
         let mut url = self.url.clone();
         url.push_str("/file/");
         url.push_str(name);
-        let schema = check_status(reqwest::get(url).await?, name)?.json().await?;
+        let schema = check_status(reqwest::get(url).await?, name)
+            .await?
+            .json()
+            .await?;
         let url = format!("{}/{}", self.url, name);
         Ok(Box::new(HttpDBFile {
             name: name.to_string(),
@@ -58,7 +71,7 @@ impl DB for HttpDB {
         url.push_str("/file/");
         url.push_str(name);
         let client = Client::new();
-        check_status(client.post(url).json(&schema).send().await?, name)?;
+        check_status(client.post(url).json(&schema).send().await?, name).await?;
         let url = format!("{}/{}", self.url, name);
         Ok(Box::new(HttpDBFile {
             name: name.to_string(),
@@ -73,7 +86,7 @@ impl DB for HttpDB {
         let mut url = self.url.clone();
         url.push_str("/file/");
         url.push_str(name);
-        check_status(client.delete(url).send().await?, name)?;
+        check_status(client.delete(url).send().await?, name).await?;
         Ok(())
     }
 }
@@ -86,7 +99,7 @@ impl HttpDBFile {
         } else if res.status() == StatusCode::NOT_FOUND {
             Ok(None)
         } else {
-            Err(anyhow::anyhow!("Failed to get item: {}", res.status()))
+            Err(server_error(res).await)
         }
     }
 }
@@ -103,7 +116,7 @@ impl DBFile for HttpDBFile {
             .get(format!("{}/items", self.url))
             .send()
             .await?;
-        Ok(check_status(res, &self.name)?.json().await?)
+        Ok(check_status(res, &self.name).await?.json().await?)
     }
 
     async fn list_done(&self) -> Result<Vec<DbItem>> {
@@ -112,7 +125,7 @@ impl DBFile for HttpDBFile {
             .get(format!("{}/items/done", self.url))
             .send()
             .await?;
-        Ok(check_status(res, &self.name)?.json().await?)
+        Ok(check_status(res, &self.name).await?.json().await?)
     }
 
     async fn list_undone(&self) -> Result<Vec<DbItem>> {
@@ -121,7 +134,7 @@ impl DBFile for HttpDBFile {
             .get(format!("{}/items/undone", self.url))
             .send()
             .await?;
-        Ok(check_status(res, &self.name)?.json().await?)
+        Ok(check_status(res, &self.name).await?.json().await?)
     }
 
     async fn insert(&mut self, fields: &[DbField]) -> Result<()> {
@@ -131,7 +144,7 @@ impl DBFile for HttpDBFile {
             .json(fields)
             .send()
             .await?;
-        check_status(res, &self.name)?;
+        check_status(res, &self.name).await?;
         Ok(())
     }
 
@@ -141,7 +154,7 @@ impl DBFile for HttpDBFile {
             .delete(format!("{}/items/{}", self.url, id))
             .send()
             .await?;
-        check_status(res, &self.name)?;
+        check_status(res, &self.name).await?;
         Ok(())
     }
 
@@ -160,7 +173,7 @@ impl DBFile for HttpDBFile {
             .json(&time)
             .send()
             .await?;
-        check_status(res, &self.name)?;
+        check_status(res, &self.name).await?;
         Ok(())
     }
 
@@ -170,7 +183,7 @@ impl DBFile for HttpDBFile {
             .post(format!("{}/items/{}/undone", self.url, id))
             .send()
             .await?;
-        check_status(res, &self.name)?;
+        check_status(res, &self.name).await?;
         Ok(())
     }
 
@@ -181,6 +194,6 @@ impl DBFile for HttpDBFile {
             .query(&[("q", item_name)])
             .send()
             .await?;
-        Ok(check_status(res, &self.name)?.json().await?)
+        Ok(check_status(res, &self.name).await?.json().await?)
     }
 }

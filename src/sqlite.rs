@@ -299,6 +299,15 @@ impl DBFile for SqliteFile {
         }) {
             return Err(DbError::UnknownField(f.name.clone()).into());
         }
+        // Columns left out would be NULL, which can't be read back
+        if let Some(d) = self
+            .schema
+            .fields
+            .iter()
+            .find(|d| !fields.iter().any(|f| f.name.eq_ignore_ascii_case(&d.name)))
+        {
+            return Err(DbError::MissingField(d.name.clone()).into());
+        }
         let field_names = fields
             .iter()
             .map(|f| format!("\"{}\"", f.name.as_str()))
@@ -447,7 +456,6 @@ mod tests {
     }
 
     async fn insert_texts(file: &mut SqliteFile, texts: &[&str]) {
-        // Every field must be set, NULLs can't be read back
         for t in texts {
             file.insert(&[
                 text("txt", t),
@@ -595,6 +603,14 @@ mod tests {
         let mut file = create_file().await;
         let err = file.insert(&[text("nope", "x")]).await.unwrap_err();
         assert!(matches!(db_error(err), DbError::UnknownField(f) if f == "nope"));
+        assert!(file.list_items().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_insert_missing_field() {
+        let mut file = create_file().await;
+        let err = file.insert(&[text("txt", "a")]).await.unwrap_err();
+        assert!(matches!(db_error(err), DbError::MissingField(f) if f == "due"));
         assert!(file.list_items().await.unwrap().is_empty());
     }
 
