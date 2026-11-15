@@ -27,6 +27,8 @@ pub trait DBFile: Send + Sync {
     async fn done(&mut self, id: u32, time: NaiveDateTime) -> Result<()>;
     async fn undone(&mut self, id: u32) -> Result<()>;
     async fn find(&self, item_name: &str) -> Result<Vec<DbItem>>;
+    /// Releases the underlying resources, so the file can be deleted (Windows can't delete open files)
+    async fn close(&self);
 }
 
 #[derive(Clone, Deserialize, Serialize)]

@@ -110,6 +110,8 @@ impl DBFile for HttpDBFile {
         self.schema.clone()
     }
 
+    async fn close(&self) {}
+
     async fn list_items(&self) -> Result<Vec<DbItem>> {
         let res = self
             .client

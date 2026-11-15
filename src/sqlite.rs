@@ -288,6 +288,10 @@ impl DBFile for SqliteFile {
         self.schema.clone()
     }
 
+    async fn close(&self) {
+        self.pool.close().await;
+    }
+
     async fn insert(&mut self, fields: &[DbField]) -> Result<()> {
         // Field names are interpolated into SQL, so only allow ones from the schema
         if let Some(f) = fields.iter().find(|f| {
@@ -777,7 +781,11 @@ mod tests {
     async fn test_delete_file() {
         let dir = tempfile::tempdir().unwrap();
         let db = SqliteDB::new(dir.path());
-        db.create("test", text_schema()).await.unwrap();
+        db.create("test", text_schema())
+            .await
+            .unwrap()
+            .close()
+            .await;
         db.delete("test").await.unwrap();
         assert!(db.list_files().await.unwrap().is_empty());
         let err = db.delete("test").await.unwrap_err();

@@ -77,6 +77,7 @@ async fn open_file(
     Path(name): Path<String>,
 ) -> Result<Json<DbSchema>, RedError> {
     let file = db.open(&name).await?;
+    file.close().await;
     Ok(Json(file.schema()))
 }
 
@@ -93,7 +94,7 @@ async fn create_file(
     Path(name): Path<String>,
     Json(schema): Json<DbSchema>,
 ) -> Result<StatusCode, RedError> {
-    db.create(&name, schema).await?;
+    db.create(&name, schema).await?.close().await;
     Ok(StatusCode::CREATED)
 }
 
@@ -102,8 +103,9 @@ async fn list_items(
     Path(name): Path<String>,
 ) -> Result<Json<Vec<DbItem>>, RedError> {
     let file = db.open(&name).await?;
-    let items = file.list_items().await?;
-    Ok(Json(items))
+    let items = file.list_items().await;
+    file.close().await;
+    Ok(Json(items?))
 }
 
 async fn list_done(
@@ -111,8 +113,9 @@ async fn list_done(
     Path(name): Path<String>,
 ) -> Result<Json<Vec<DbItem>>, RedError> {
     let file = db.open(&name).await?;
-    let items = file.list_done().await?;
-    Ok(Json(items))
+    let items = file.list_done().await;
+    file.close().await;
+    Ok(Json(items?))
 }
 
 async fn list_undone(
@@ -120,8 +123,9 @@ async fn list_undone(
     Path(name): Path<String>,
 ) -> Result<Json<Vec<DbItem>>, RedError> {
     let file = db.open(&name).await?;
-    let items = file.list_undone().await?;
-    Ok(Json(items))
+    let items = file.list_undone().await;
+    file.close().await;
+    Ok(Json(items?))
 }
 
 async fn get_item(
@@ -129,7 +133,9 @@ async fn get_item(
     Path((name, id)): Path<(String, u32)>,
 ) -> Result<Response, RedError> {
     let mut file = db.open(&name).await?;
-    match file.get(id).await? {
+    let item = file.get(id).await;
+    file.close().await;
+    match item? {
         Some(item) => Ok(Json(item).into_response()),
         None => Ok(StatusCode::NOT_FOUND.into_response()),
     }
@@ -140,7 +146,9 @@ async fn get_random(
     Path(name): Path<String>,
 ) -> Result<Response, RedError> {
     let mut file = db.open(&name).await?;
-    match file.get_random().await? {
+    let item = file.get_random().await;
+    file.close().await;
+    match item? {
         Some(item) => Ok(Json(item).into_response()),
         None => Ok(StatusCode::NOT_FOUND.into_response()),
     }
@@ -157,8 +165,9 @@ async fn search(
     Query(params): Query<SearchParams>,
 ) -> Result<Json<Vec<DbItem>>, RedError> {
     let file = db.open(&name).await?;
-    let items = file.find(&params.q).await?;
-    Ok(Json(items))
+    let items = file.find(&params.q).await;
+    file.close().await;
+    Ok(Json(items?))
 }
 
 async fn insert_item(
@@ -167,7 +176,9 @@ async fn insert_item(
     Json(fields): Json<Vec<DbField>>,
 ) -> Result<StatusCode, RedError> {
     let mut file = db.open(&name).await?;
-    file.insert(&fields).await?;
+    let res = file.insert(&fields).await;
+    file.close().await;
+    res?;
     Ok(StatusCode::CREATED)
 }
 
@@ -176,7 +187,9 @@ async fn delete_item(
     Path((name, id)): Path<(String, u32)>,
 ) -> Result<StatusCode, RedError> {
     let mut file = db.open(&name).await?;
-    file.delete(id).await?;
+    let res = file.delete(id).await;
+    file.close().await;
+    res?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -186,7 +199,9 @@ async fn done(
     Json(time): Json<NaiveDateTime>,
 ) -> Result<StatusCode, RedError> {
     let mut file = db.open(&name).await?;
-    file.done(id, time).await?;
+    let res = file.done(id, time).await;
+    file.close().await;
+    res?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -195,7 +210,9 @@ async fn undone(
     Path((name, id)): Path<(String, u32)>,
 ) -> Result<StatusCode, RedError> {
     let mut file = db.open(&name).await?;
-    file.undone(id).await?;
+    let res = file.undone(id).await;
+    file.close().await;
+    res?;
     Ok(StatusCode::NO_CONTENT)
 }
 
