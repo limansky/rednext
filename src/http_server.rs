@@ -22,11 +22,17 @@ use crate::{
 pub async fn create_server(db: Arc<SqliteDB>, port: u16) -> Result<(), std::io::Error> {
     let listener =
         tokio::net::TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port))
-            .await
-            .unwrap();
-    let app = Router::new()
+            .await?;
+    axum::serve(listener, router(db)).await
+}
+
+fn router(db: Arc<SqliteDB>) -> Router {
+    Router::new()
         .route("/list", get(list_files))
-        .route("/file/{name}", get(open_file).delete(delete_file).post(create_file))
+        .route(
+            "/file/{name}",
+            get(open_file).delete(delete_file).post(create_file),
+        )
         .route("/{name}/items", get(list_items).post(insert_item))
         .route("/{name}/items/done", get(list_done))
         .route("/{name}/items/undone", get(list_undone))
@@ -35,9 +41,7 @@ pub async fn create_server(db: Arc<SqliteDB>, port: u16) -> Result<(), std::io::
         .route("/{name}/items/{id}", get(get_item).delete(delete_item))
         .route("/{name}/items/{id}/done", post(done))
         .route("/{name}/items/{id}/undone", post(undone))
-        .with_state(db);
-
-    axum::serve(listener, app).await
+        .with_state(db)
 }
 
 struct RedError(anyhow::Error);
@@ -193,4 +197,206 @@ async fn undone(
     let mut file = db.open(&name).await?;
     file.undone(id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use axum::{http::StatusCode, response::IntoResponse};
+    use chrono::NaiveDate;
+    use tempfile::TempDir;
+
+    use super::{RedError, router};
+    use crate::{
+        db::{DB, DbError, DbField, DbFieldDesc, DbFieldType, DbSchema, DbValue},
+        http_client::HttpDB,
+        sqlite::SqliteDB,
+    };
+
+    /// Starts a server backed by a temporary directory, the directory lives as long as the returned guard
+    async fn start_server() -> (HttpDB, TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(SqliteDB::new(dir.path()));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, router(db)).await.unwrap() });
+        (HttpDB::new(format!("http://{addr}")), dir)
+    }
+
+    fn schema() -> DbSchema {
+        DbSchema {
+            fields: vec![
+                DbFieldDesc::new("txt", DbFieldType::Text),
+                DbFieldDesc::new("due", DbFieldType::DateTime),
+                DbFieldDesc::new("flag", DbFieldType::Boolean),
+                DbFieldDesc::new("n", DbFieldType::Number),
+            ],
+        }
+    }
+
+    fn time(day: u32, hour: u32) -> chrono::NaiveDateTime {
+        NaiveDate::from_ymd_opt(2024, 7, day)
+            .unwrap()
+            .and_hms_opt(hour, 30, 0)
+            .unwrap()
+    }
+
+    fn item(txt: &str, n: i32) -> Vec<DbField> {
+        vec![
+            DbField {
+                name: "txt".to_string(),
+                value: DbValue::Text(txt.to_string()),
+            },
+            DbField {
+                name: "due".to_string(),
+                value: DbValue::DateTime(time(1, 12)),
+            },
+            DbField {
+                name: "flag".to_string(),
+                value: DbValue::Boolean(true),
+            },
+            DbField {
+                name: "n".to_string(),
+                value: DbValue::Number(n),
+            },
+        ]
+    }
+
+    fn db_error(err: anyhow::Error) -> DbError {
+        err.downcast::<DbError>().expect("expected DbError")
+    }
+
+    #[tokio::test]
+    async fn test_file_lifecycle() {
+        let (db, _dir) = start_server().await;
+        assert!(db.list_files().await.unwrap().is_empty());
+
+        db.create("todo", schema()).await.unwrap();
+        assert_eq!(db.list_files().await.unwrap(), vec!["todo".to_string()]);
+
+        let fields = db.open("todo").await.unwrap().schema().fields;
+        let names: Vec<_> = fields.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, vec!["txt", "due", "flag", "n"]);
+        assert!(fields[1].field_type == DbFieldType::DateTime);
+
+        let err = db.create("todo", schema()).await.err().unwrap();
+        assert!(matches!(db_error(err), DbError::DbAlreadyExists(n) if n == "todo"));
+
+        db.delete("todo").await.unwrap();
+        assert!(db.list_files().await.unwrap().is_empty());
+        let err = db.open("todo").await.err().unwrap();
+        assert!(matches!(db_error(err), DbError::NotFound(n) if n == "todo"));
+        let err = db.delete("todo").await.unwrap_err();
+        assert!(matches!(db_error(err), DbError::NotFound(n) if n == "todo"));
+    }
+
+    #[tokio::test]
+    async fn test_items_roundtrip() {
+        let (db, _dir) = start_server().await;
+        let mut file = db.create("todo", schema()).await.unwrap();
+        assert!(file.list_items().await.unwrap().is_empty());
+        assert!(file.get_random().await.unwrap().is_none());
+
+        file.insert(&item("buy milk", 1)).await.unwrap();
+        file.insert(&item("call mom", 2)).await.unwrap();
+
+        let items = file.list_items().await.unwrap();
+        assert_eq!(items.len(), 2);
+        let values: Vec<_> = items[0].fields.iter().map(|f| &f.value).collect();
+        assert_eq!(
+            values,
+            vec![
+                &DbValue::Text("buy milk".to_string()),
+                &DbValue::DateTime(time(1, 12)),
+                &DbValue::Boolean(true),
+                &DbValue::Number(1),
+            ]
+        );
+
+        let second = file.get(2).await.unwrap().unwrap();
+        assert_eq!(second.fields[3].value, DbValue::Number(2));
+        assert!(file.get(42).await.unwrap().is_none());
+
+        // the query must survive URL encoding
+        let found = file.find("buy milk").await.unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].id, 1);
+        assert_eq!(file.find("a&b=c").await.unwrap().len(), 0);
+
+        file.done(1, time(3, 9)).await.unwrap();
+        let done = file.list_done().await.unwrap();
+        assert_eq!(done.len(), 1);
+        assert_eq!(done[0].completed_at, Some(time(3, 9)));
+        let undone = file.list_undone().await.unwrap();
+        assert_eq!(undone.iter().map(|i| i.id).collect::<Vec<_>>(), vec![2]);
+        assert_eq!(file.get_random().await.unwrap().unwrap().id, 2);
+
+        file.undone(1).await.unwrap();
+        assert!(file.list_done().await.unwrap().is_empty());
+
+        file.delete(1).await.unwrap();
+        let ids: Vec<_> = file
+            .list_items()
+            .await
+            .unwrap()
+            .iter()
+            .map(|i| i.id)
+            .collect();
+        assert_eq!(ids, vec![2]);
+    }
+
+    #[tokio::test]
+    async fn test_item_errors() {
+        let (db, _dir) = start_server().await;
+        let mut file = db.create("todo", schema()).await.unwrap();
+
+        let unknown = vec![DbField {
+            name: "nope".to_string(),
+            value: DbValue::Number(1),
+        }];
+        assert!(file.insert(&unknown).await.is_err());
+        assert!(file.list_items().await.unwrap().is_empty());
+
+        assert!(file.done(42, time(1, 0)).await.is_err());
+        assert!(file.undone(42).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_items_of_deleted_file() {
+        let (db, _dir) = start_server().await;
+        let mut file = db.create("todo", schema()).await.unwrap();
+        db.delete("todo").await.unwrap();
+
+        let err = file.list_items().await.err().unwrap();
+        assert!(matches!(db_error(err), DbError::NotFound(n) if n == "todo"));
+        let err = file.find("x").await.err().unwrap();
+        assert!(matches!(db_error(err), DbError::NotFound(_)));
+        let err = file.insert(&item("x", 1)).await.unwrap_err();
+        assert!(matches!(db_error(err), DbError::NotFound(_)));
+    }
+
+    #[test]
+    fn test_error_status() {
+        let status = |e: anyhow::Error| RedError(e).into_response().status();
+        assert_eq!(
+            status(DbError::NotFound("x".into()).into()),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            status(DbError::UnknownField("x".into()).into()),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status(DbError::DbAlreadyExists("x".into()).into()),
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            status(anyhow::anyhow!("boom")),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        // DbError wrapped in context must still be recognized
+        let wrapped = anyhow::Error::from(DbError::NotFound("x".into())).context("Cannot open");
+        assert_eq!(status(wrapped), StatusCode::NOT_FOUND);
+    }
 }

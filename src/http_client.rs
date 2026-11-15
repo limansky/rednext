@@ -1,6 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use reqwest::{Client, StatusCode};
+use reqwest::{Client, Response, StatusCode};
 
 use crate::db::{DB, DBFile, DbError, DbField, DbItem, DbSchema};
 
@@ -9,6 +9,7 @@ pub struct HttpDB {
 }
 
 struct HttpDBFile {
+    name: String,
     url: String,
     schema: DbSchema,
     client: Client,
@@ -17,6 +18,15 @@ struct HttpDBFile {
 impl HttpDB {
     pub fn new(url: String) -> Self {
         HttpDB { url }
+    }
+}
+
+/// Converts error statuses into errors, mapping the ones with a `DbError` counterpart
+fn check_status(res: Response, name: &str) -> Result<Response> {
+    match res.status() {
+        StatusCode::NOT_FOUND => Err(DbError::NotFound(name.to_string()).into()),
+        StatusCode::CONFLICT => Err(DbError::DbAlreadyExists(name.to_string()).into()),
+        _ => Ok(res.error_for_status()?),
     }
 }
 
@@ -33,13 +43,10 @@ impl DB for HttpDB {
         let mut url = self.url.clone();
         url.push_str("/file/");
         url.push_str(name);
-        let res = reqwest::get(url).await?;
-        if res.status() == StatusCode::NOT_FOUND {
-            return Err(DbError::NotFound(name.to_string()).into());
-        }
-        let schema = res.error_for_status()?.json().await?;
+        let schema = check_status(reqwest::get(url).await?, name)?.json().await?;
         let url = format!("{}/{}", self.url, name);
         Ok(Box::new(HttpDBFile {
+            name: name.to_string(),
             url,
             schema,
             client: Client::new(),
@@ -51,13 +58,10 @@ impl DB for HttpDB {
         url.push_str("/file/");
         url.push_str(name);
         let client = Client::new();
-        let res = client.post(url).json(&schema).send().await?;
-        if res.status() == StatusCode::CONFLICT {
-            return Err(DbError::DbAlreadyExists(name.to_string()).into());
-        }
-        res.error_for_status()?;
+        check_status(client.post(url).json(&schema).send().await?, name)?;
         let url = format!("{}/{}", self.url, name);
         Ok(Box::new(HttpDBFile {
+            name: name.to_string(),
             url,
             schema,
             client,
@@ -69,7 +73,7 @@ impl DB for HttpDB {
         let mut url = self.url.clone();
         url.push_str("/file/");
         url.push_str(name);
-        client.delete(url).send().await?.error_for_status()?;
+        check_status(client.delete(url).send().await?, name)?;
         Ok(())
     }
 }
@@ -94,54 +98,50 @@ impl DBFile for HttpDBFile {
     }
 
     async fn list_items(&self) -> Result<Vec<DbItem>> {
-        let res: Vec<DbItem> = self
+        let res = self
             .client
             .get(format!("{}/items", self.url))
             .send()
-            .await?
-            .json()
             .await?;
-        Ok(res)
+        Ok(check_status(res, &self.name)?.json().await?)
     }
 
     async fn list_done(&self) -> Result<Vec<DbItem>> {
-        let res: Vec<DbItem> = self
+        let res = self
             .client
             .get(format!("{}/items/done", self.url))
             .send()
-            .await?
-            .json()
             .await?;
-        Ok(res)
+        Ok(check_status(res, &self.name)?.json().await?)
     }
 
     async fn list_undone(&self) -> Result<Vec<DbItem>> {
-        let res: Vec<DbItem> = self
+        let res = self
             .client
             .get(format!("{}/items/undone", self.url))
             .send()
-            .await?
-            .json()
             .await?;
-        Ok(res)
+        Ok(check_status(res, &self.name)?.json().await?)
     }
 
     async fn insert(&mut self, fields: &[DbField]) -> Result<()> {
-        self.client
+        let res = self
+            .client
             .post(format!("{}/items", self.url))
             .json(fields)
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+        check_status(res, &self.name)?;
         Ok(())
     }
 
     async fn delete(&mut self, id: u32) -> Result<()> {
-        self.client
+        let res = self
+            .client
             .delete(format!("{}/items/{}", self.url, id))
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+        check_status(res, &self.name)?;
         Ok(())
     }
 
@@ -154,33 +154,33 @@ impl DBFile for HttpDBFile {
     }
 
     async fn done(&mut self, id: u32, time: chrono::NaiveDateTime) -> Result<()> {
-        self.client
+        let res = self
+            .client
             .post(format!("{}/items/{}/done", self.url, id))
             .json(&time)
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+        check_status(res, &self.name)?;
         Ok(())
     }
 
     async fn undone(&mut self, id: u32) -> Result<()> {
-        self.client
+        let res = self
+            .client
             .post(format!("{}/items/{}/undone", self.url, id))
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+        check_status(res, &self.name)?;
         Ok(())
     }
 
     async fn find(&self, item_name: &str) -> Result<Vec<DbItem>> {
-        let res: Vec<DbItem> = self
+        let res = self
             .client
             .get(format!("{}/items/search", self.url))
             .query(&[("q", item_name)])
             .send()
-            .await?
-            .json()
             .await?;
-        Ok(res)
+        Ok(check_status(res, &self.name)?.json().await?)
     }
 }

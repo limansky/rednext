@@ -209,7 +209,12 @@ impl DB for SqliteDB {
         let mut path = self.path.clone();
         path.push(name);
         path.set_extension("db");
-        fs::remove_file(path).context("Cannot delete file")
+        match fs::remove_file(path) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                Err(DbError::NotFound(name.to_string()).into())
+            }
+            r => r.context("Cannot delete file"),
+        }
     }
 }
 
@@ -419,9 +424,59 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
 
     use crate::{
-        db::{DB, DBFile, DbField, DbFieldDesc, DbFieldType, DbSchema, DbValue},
+        db::{DB, DBFile, DbError, DbField, DbFieldDesc, DbFieldType, DbSchema, DbValue},
         sqlite::{SqliteDB, SqliteFile},
     };
+
+    fn text(name: &str, value: &str) -> DbField {
+        DbField {
+            name: name.to_string(),
+            value: DbValue::Text(value.to_string()),
+        }
+    }
+
+    fn time(day: u32) -> chrono::NaiveDateTime {
+        NaiveDate::from_ymd_opt(2024, 7, day)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+    }
+
+    fn db_error(err: anyhow::Error) -> DbError {
+        err.downcast::<DbError>().expect("expected DbError")
+    }
+
+    async fn insert_texts(file: &mut SqliteFile, texts: &[&str]) {
+        // Every field must be set, NULLs can't be read back
+        for t in texts {
+            file.insert(&[
+                text("txt", t),
+                DbField {
+                    name: "due".to_string(),
+                    value: DbValue::DateTime(time(1)),
+                },
+                DbField {
+                    name: "bool".to_string(),
+                    value: DbValue::Boolean(false),
+                },
+                DbField {
+                    name: "n".to_string(),
+                    value: DbValue::Number(0),
+                },
+            ])
+            .await
+            .unwrap();
+        }
+    }
+
+    fn text_schema() -> DbSchema {
+        DbSchema {
+            fields: vec![
+                DbFieldDesc::new("txt", DbFieldType::Text),
+                DbFieldDesc::new("n", DbFieldType::Number),
+            ],
+        }
+    }
 
     async fn create_file() -> SqliteFile {
         // A single long-lived connection, otherwise each pooled connection gets its own in-memory DB
@@ -525,23 +580,198 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get() {
+        let mut file = create_file().await;
+        insert_texts(&mut file, &["a", "b"]).await;
+        let item = file.get(2).await.unwrap().unwrap();
+        assert_eq!(item.id, 2);
+        assert_eq!(item.fields[0].value, DbValue::Text("b".to_string()));
+        assert!(item.completed_at.is_none());
+        assert!(file.get(3).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_insert_unknown_field() {
+        let mut file = create_file().await;
+        let err = file.insert(&[text("nope", "x")]).await.unwrap_err();
+        assert!(matches!(db_error(err), DbError::UnknownField(f) if f == "nope"));
+        assert!(file.list_items().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_insert_field_name_case_insensitive() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = SqliteDB::new(dir.path());
+        let mut file = db
+            .create(
+                "test",
+                DbSchema {
+                    fields: vec![DbFieldDesc::new("txt", DbFieldType::Text)],
+                },
+            )
+            .await
+            .unwrap();
+        file.insert(&[text("TXT", "a")]).await.unwrap();
+        let items = file.list_items().await.unwrap();
+        assert_eq!(items[0].fields[0].value, DbValue::Text("a".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_delete_item() {
+        let mut file = create_file().await;
+        insert_texts(&mut file, &["a", "b"]).await;
+        file.delete(1).await.unwrap();
+        let ids: Vec<u32> = file
+            .list_items()
+            .await
+            .unwrap()
+            .iter()
+            .map(|i| i.id)
+            .collect();
+        assert_eq!(ids, vec![2]);
+    }
+
+    #[tokio::test]
+    async fn test_done_undone() {
+        let mut file = create_file().await;
+        insert_texts(&mut file, &["a", "b", "c"]).await;
+        file.done(3, time(5)).await.unwrap();
+        file.done(1, time(7)).await.unwrap();
+
+        // done items are ordered by completion time, undone ones by id
+        let done: Vec<u32> = file
+            .list_done()
+            .await
+            .unwrap()
+            .iter()
+            .map(|i| i.id)
+            .collect();
+        assert_eq!(done, vec![3, 1]);
+        let undone: Vec<u32> = file
+            .list_undone()
+            .await
+            .unwrap()
+            .iter()
+            .map(|i| i.id)
+            .collect();
+        assert_eq!(undone, vec![2]);
+        assert_eq!(
+            file.get(3).await.unwrap().unwrap().completed_at,
+            Some(time(5))
+        );
+
+        file.undone(3).await.unwrap();
+        assert!(file.get(3).await.unwrap().unwrap().completed_at.is_none());
+        let undone: Vec<u32> = file
+            .list_undone()
+            .await
+            .unwrap()
+            .iter()
+            .map(|i| i.id)
+            .collect();
+        assert_eq!(undone, vec![2, 3]);
+    }
+
+    #[tokio::test]
+    async fn test_done_undone_missing_item() {
+        let mut file = create_file().await;
+        assert!(file.done(1, time(1)).await.is_err());
+        assert!(file.undone(1).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_get_random_skips_done() {
+        let mut file = create_file().await;
+        assert!(file.get_random().await.unwrap().is_none());
+        insert_texts(&mut file, &["a", "b", "c"]).await;
+        file.done(1, time(1)).await.unwrap();
+        file.done(3, time(1)).await.unwrap();
+        for _ in 0..10 {
+            assert_eq!(file.get_random().await.unwrap().unwrap().id, 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_find() {
+        let mut file = create_file().await;
+        insert_texts(&mut file, &["buy milk", "call mom", "Buy bread"]).await;
+        let found: Vec<u32> = file
+            .find("buy")
+            .await
+            .unwrap()
+            .iter()
+            .map(|i| i.id)
+            .collect();
+        assert_eq!(found, vec![1, 3]);
+        assert!(file.find("nothing").await.unwrap().is_empty());
+        // LIKE wildcards in the query are not escaped
+        assert_eq!(file.find("%").await.unwrap().len(), 3);
+    }
+
+    #[tokio::test]
     async fn test_create_and_open() {
-        let dir = std::env::temp_dir().join(format!("rednext-test-{}", std::process::id()));
-        let db = SqliteDB::new(&dir);
-        let schema = DbSchema {
-            fields: vec![
-                DbFieldDesc::new("txt", DbFieldType::Text),
-                DbFieldDesc::new("n", DbFieldType::Number),
-            ],
-        };
-        db.create("test", schema).await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let db = SqliteDB::new(dir.path());
+        db.create("test", text_schema()).await.unwrap();
         assert_eq!(db.list_files().await.unwrap(), vec!["test".to_string()]);
         let file = db.open("test").await.unwrap();
         let fields = file.schema().fields;
         assert_eq!(fields.len(), 2);
         assert!(fields[0].name == "txt" && fields[0].field_type == DbFieldType::Text);
         assert!(fields[1].name == "n" && fields[1].field_type == DbFieldType::Number);
-        drop(file);
-        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_created_file_is_usable() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = SqliteDB::new(dir.path());
+        db.create("test", text_schema()).await.unwrap();
+        let mut file = db.open("test").await.unwrap();
+        file.insert(&[
+            text("txt", "a"),
+            DbField {
+                name: "n".to_string(),
+                value: DbValue::Number(7),
+            },
+        ])
+        .await
+        .unwrap();
+        let item = file.get(1).await.unwrap().unwrap();
+        assert_eq!(item.fields[1].value, DbValue::Number(7));
+    }
+
+    #[tokio::test]
+    async fn test_create_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = SqliteDB::new(dir.path());
+        db.create("test", text_schema()).await.unwrap();
+        let err = db.create("test", text_schema()).await.err().unwrap();
+        assert!(matches!(db_error(err), DbError::DbAlreadyExists(n) if n == "test"));
+    }
+
+    #[tokio::test]
+    async fn test_open_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = SqliteDB::new(dir.path());
+        let err = db.open("nope").await.err().unwrap();
+        assert!(matches!(db_error(err), DbError::NotFound(n) if n == "nope"));
+    }
+
+    #[tokio::test]
+    async fn test_delete_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = SqliteDB::new(dir.path());
+        db.create("test", text_schema()).await.unwrap();
+        db.delete("test").await.unwrap();
+        assert!(db.list_files().await.unwrap().is_empty());
+        let err = db.delete("test").await.unwrap_err();
+        assert!(matches!(db_error(err), DbError::NotFound(n) if n == "test"));
+    }
+
+    #[tokio::test]
+    async fn test_list_files_missing_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = SqliteDB::new(&dir.path().join("missing"));
+        assert!(db.list_files().await.unwrap().is_empty());
     }
 }
