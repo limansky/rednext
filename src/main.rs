@@ -3,6 +3,7 @@ use std::{
     fmt::Display,
     path::{Path, PathBuf},
     str::FromStr,
+    sync::Arc,
 };
 
 use anyhow::Context;
@@ -16,10 +17,13 @@ use dirs::config_dir;
 
 use crate::{
     db::{DB, DBFile, DbField, DbFieldDesc, DbFieldType, DbItem, DbSchema, DbValue},
+    http_client::HttpDB,
     sqlite::SqliteDB,
 };
 
 mod db;
+mod http_client;
+mod http_server;
 mod sqlite;
 
 #[derive(Subcommand, Debug)]
@@ -49,6 +53,13 @@ enum Action {
     /// Delete file
     #[command(arg_required_else_help = true)]
     Delete { name: String },
+
+    /// Start HTTP server
+    Serve {
+        /// Port to listen on
+        #[arg(long, default_value_t = 8080)]
+        port: u16,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -119,6 +130,9 @@ impl std::fmt::Display for ListWhat {
 #[derive(Parser, Debug)]
 #[command(about = "Simple random tasks manager")]
 struct Params {
+    /// Connect to remote http server instead of local database (e.g. http://localhost:8080)
+    #[arg(long)]
+    http: Option<String>,
     #[command(subcommand)]
     action: Action,
 }
@@ -142,27 +156,40 @@ fn delimiter_parser(s: &str) -> Result<u8, String> {
     }
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let params = Params::parse();
-    let mut db_path = config_dir().unwrap();
-    db_path.push("rednext");
-    let db = SqliteDB::new(&db_path);
+    let db: Box<dyn DB> = if let Some(url) = params.http {
+        Box::new(HttpDB::new(url))
+    } else {
+        let mut db_path = config_dir().unwrap();
+        db_path.push("rednext");
+        Box::new(SqliteDB::new(&db_path))
+    };
     match params.action {
-        Action::List => list(&db),
+        Action::List => list(db.as_ref()).await,
         Action::Items(ip) => {
-            let file = db.open(&ip.name).unwrap();
+            let mut file = match db.open(&ip.name).await {
+                Ok(file) => file,
+                Err(e) => {
+                    eprintln!("{:#}", e);
+                    std::process::exit(1);
+                }
+            };
             match ip.action {
-                ItemsAction::List { what } => list_items(file.as_ref(), what),
-                ItemsAction::Add => add_item(file.as_ref()),
-                ItemsAction::Delete { id } => delete_item(file.as_ref(), id),
+                ItemsAction::List { what } => list_items(file.as_ref(), what).await,
+                ItemsAction::Add => add_item(file.as_mut()).await,
+                ItemsAction::Delete { id } => delete_item(file.as_mut(), id).await,
                 ItemsAction::Import {
                     file_name,
                     delimiter,
                     no_header,
-                } => import_csv(file.as_ref(), &file_name, no_header, delimiter).unwrap(),
-                ItemsAction::Get { id } => get(file.as_ref(), id),
-                ItemsAction::GetRandom => get_random(file.as_ref()),
-                ItemsAction::Find { name } => find_by_name(file.as_ref(), &name),
+                } => import_csv(file.as_mut(), &file_name, no_header, delimiter)
+                    .await
+                    .unwrap(),
+                ItemsAction::Get { id } => get(file.as_mut(), id).await,
+                ItemsAction::GetRandom => get_random(file.as_mut()).await,
+                ItemsAction::Find { name } => find_by_name(file.as_ref(), &name).await,
             }
         }
         Action::New {
@@ -170,13 +197,26 @@ fn main() {
             from_file,
             delimiter,
             no_header,
-        } => new_file(&db, &name, from_file, delimiter, no_header).unwrap(),
-        Action::Delete { name } => delete(&db, &name),
+        } => new_file(db.as_ref(), &name, from_file, delimiter, no_header)
+            .await
+            .unwrap(),
+        Action::Delete { name } => delete(db.as_ref(), &name).await,
+        Action::Serve { port } => start_server(port).await,
     }
 }
 
-fn list(db: &impl DB) {
-    let files = db.list_files().unwrap();
+async fn start_server(port: u16) {
+    let mut db_path = config_dir().unwrap();
+    db_path.push("rednext");
+    let db = SqliteDB::new(&db_path);
+    println!("Starting server on port {}", port);
+    http_server::create_server(Arc::new(db), port)
+        .await
+        .unwrap();
+}
+
+async fn list(db: &dyn DB) {
+    let files = db.list_files().await.unwrap();
     for (i, name) in (1..).zip(files) {
         println!("{}. {}", i, name);
     }
@@ -189,12 +229,13 @@ const TABLE_STYLE: TableStyle = TableStyle::new()
     .content_lines(ContentLineStyle::new('│', '│', '│'))
     .bottom_border(LineStyle::new('└', '─', '┴', '┘'));
 
-fn list_items(file: &dyn DBFile, what: ListWhat) {
+async fn list_items(file: &dyn DBFile, what: ListWhat) {
     let items = match what {
         ListWhat::All => file.list_items(),
         ListWhat::Done => file.list_done(),
         ListWhat::Undone => file.list_undone(),
     }
+    .await
     .unwrap();
 
     let stat_style = Style::new().bold();
@@ -265,7 +306,7 @@ impl Display for DateParseError {
     }
 }
 
-fn add_item(file: &dyn DBFile) {
+async fn add_item(file: &mut dyn DBFile) {
     let mut fields = Vec::new();
     for field in file.schema().fields.iter() {
         let val = match field.field_type {
@@ -300,25 +341,25 @@ fn add_item(file: &dyn DBFile) {
             value: val,
         });
     }
-    file.insert(&fields).unwrap();
+    file.insert(&fields).await.unwrap();
 }
 
-fn delete_item(file: &dyn DBFile, id: u32) {
-    file.delete(id).unwrap();
+async fn delete_item(file: &mut dyn DBFile, id: u32) {
+    file.delete(id).await.unwrap();
 }
 
-fn get(file: &dyn DBFile, id: u32) {
-    if let Some(item) = file.get(id).unwrap() {
+async fn get(file: &mut dyn DBFile, id: u32) {
+    if let Some(item) = file.get(id).await.unwrap() {
         if item.completed_at.is_some() {
             let conf = Confirm::new()
                 .with_prompt("Already done. Mark as undone?")
                 .interact()
                 .unwrap();
             if conf {
-                file.undone(id).unwrap();
+                file.undone(id).await.unwrap();
             }
         } else {
-            mark_done(file, item);
+            mark_done(file, item).await;
         }
     } else {
         println!("Item with id {id} doesn't exist");
@@ -333,29 +374,31 @@ fn item_fields_to_string(item: &DbItem) -> String {
         .join(" - ")
 }
 
-fn get_random(file: &dyn DBFile) {
-    if let Some(item) = file.get_random().unwrap() {
+async fn get_random(file: &mut dyn DBFile) {
+    if let Some(item) = file.get_random().await.unwrap() {
         let fields_str = item_fields_to_string(&item);
         println!("Random item is {}: {}", item.id, fields_str);
-        mark_done(file, item);
+        mark_done(file, item).await;
     } else {
         println!("All items are complete");
     }
 }
 
-fn mark_done(file: &dyn DBFile, item: DbItem) {
+async fn mark_done(file: &mut dyn DBFile, item: DbItem) {
     let done = Confirm::new()
         .with_prompt("Mark as done?")
         .default(true)
         .interact()
         .unwrap();
     if done {
-        file.done(item.id, Local::now().naive_local()).unwrap();
+        file.done(item.id, Local::now().naive_local())
+            .await
+            .unwrap();
     }
 }
 
-fn find_by_name(file: &dyn DBFile, name: &str) {
-    let items = file.find(name).unwrap();
+async fn find_by_name(file: &dyn DBFile, name: &str) {
+    let items = file.find(name).await.unwrap();
     if !items.is_empty() {
         for item in items {
             let fields_str = item_fields_to_string(&item);
@@ -402,27 +445,28 @@ fn enter_schema() -> DbSchema {
     DbSchema { fields }
 }
 
-fn new_file(
-    db: &impl DB,
+async fn new_file(
+    db: &dyn DB,
     name: &str,
     source: Option<PathBuf>,
     delimiter: Option<u8>,
     no_header: bool,
 ) -> anyhow::Result<()> {
     let schema = enter_schema();
-    let file = db
+    let mut file = db
         .create(name, schema)
+        .await
         .context("Failed to create a new file")?;
 
     if let Some(source) = source {
-        import_csv(file.as_ref(), &source, no_header, delimiter)
+        import_csv(file.as_mut(), &source, no_header, delimiter).await
     } else {
         Ok(())
     }
 }
 
-fn import_csv(
-    file: &dyn DBFile,
+async fn import_csv(
+    file: &mut dyn DBFile,
     file_name: &Path,
     no_header: bool,
     delimiter: Option<u8>,
@@ -460,20 +504,20 @@ fn import_csv(
                 value,
             });
         }
-        file.insert(&fields).unwrap();
+        file.insert(&fields).await.unwrap();
     }
 
     Ok(())
 }
 
-fn delete(db: &impl DB, name: &str) {
+async fn delete(db: &dyn DB, name: &str) {
     let confirmation = Confirm::new()
         .with_prompt(format!("Are you sure you want to delete file {name}?"))
         .interact()
         .unwrap();
 
     if confirmation {
-        db.delete(name).unwrap();
+        db.delete(name).await.unwrap();
     }
 }
 
