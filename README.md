@@ -49,3 +49,18 @@ For more commands and options, run:
 ```bash
 rednext --help
 ```
+
+Builtin HTTP server
+-------------------
+
+rednext can work both as an HTTP server and a client. To starting a server:
+
+```bash
+rednext serve
+```
+
+You can also specify a port with `--port` option. Now you can connect from remote client. For example:
+
+```
+rednext --http 192.168.1.1:8080 list
+```
